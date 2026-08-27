@@ -21,7 +21,11 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.5",
     "ty>=0.0.75",
+    "fluksio"
 ]
+
+[tool.uv.sources]
+fluksio = { git = "https://git.stroblme.de/Fluksio/app", rev = "9dc1fe0a842b61dafbe25fd410bf46e2fe485b72", subdirectory = "backend" }
 
 [build-system]
 requires = ["hatchling"]
