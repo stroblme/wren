@@ -42,7 +42,7 @@ def _slug(area: str) -> str:
 def _add(lines: list[str], phrasings: list[str], tool: str, area: str) -> None:
     slug = _slug(area)
     for phrasing in phrasings:
-        lines.append(f"> {phrasing.format(area=area)}\n>> {tool.format(slug=slug)}\n")
+        lines.append(f"{phrasing.format(area=area)}\n>> {tool.format(slug=slug)}\n")
 
 
 def home_corpus(copies: int = 40) -> str:
