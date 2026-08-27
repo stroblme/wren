@@ -42,7 +42,7 @@ def train_step(
 def train(
     model: Wren,
     text: str,
-    steps: int = 300,
+    steps: int = 1000,
     batch_size: int = 32,
     seq_len: int = 128,
     lr: float = 3e-3,
