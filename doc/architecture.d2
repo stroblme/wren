@@ -1,0 +1,30 @@
+# Wren architecture — attention-only byte-level decoder
+# render: d2 doc/architecture.d2 doc/architecture.svg
+
+direction: down
+
+bytes: "UTF-8 bytes\n1 token = 1 byte, vocab 256"
+embed: "token embedding 256 × 128"
+
+blocks: "attention-only block   × 8" {
+  x: "x"
+  norm: "RMSNorm (pre-norm)"
+  qkv: "linear → Q, K, V"
+  qk: "QK-norm on Q, K\n(keeps deep stacks trainable)"
+  rope: "RoPE on Q, K\n(relative positions)"
+  attn: "causal softmax attention\n4 heads × 32 dims"
+  wo: "output projection"
+  add: "+"
+  x -> norm -> qkv -> qk -> rope -> attn -> wo -> add
+  x -> add: "residual" {style.stroke-dash: 3}
+  note: "no feed-forward network:\nits parameter budget is spent\non more attention layers instead" {
+    shape: text
+    style.italic: true
+  }
+}
+
+final: "RMSNorm"
+unembed: "unembed = embeddingᵀ (tied)"
+logits: "next-byte logits (256)"
+
+bytes -> embed -> blocks -> final -> unembed -> logits
