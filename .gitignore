@@ -1,5 +1,11 @@
 wren/weights.npz
 
+# fluksio local engine data
+.fluksio/
+
+# downloaded datasets
+data/
+
 ### Python ###
 # Byte-compiled / optimized / DLL files
 __pycache__/
