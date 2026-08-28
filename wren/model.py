@@ -33,18 +33,20 @@ class Config:
     context: int = 256  # maximum sequence length
 
 
-def rope(x: jax.Array) -> jax.Array:
+def rope(x: jax.Array, offset: jax.Array | int = 0) -> jax.Array:
     """Rotary position embedding (RoPE), applied to queries and keys.
 
     Rotates each (i, i+half) feature pair by an angle proportional to the
     token's position, at a different frequency per pair. A dot product of
     two rotated vectors then depends only on their *relative* distance, so
     the model needs no learned position table and positions generalize.
+    `offset` shifts the positions -- decoding one token at position p passes
+    a length-1 sequence with offset=p.
     """
     _, seq, _, head_dim = x.shape  # (batch, seq, heads, head_dim)
     half = head_dim // 2
     freqs = 1.0 / (10000.0 ** (jnp.arange(half) / half))
-    angles = jnp.arange(seq)[:, None] * freqs[None, :]  # (seq, half)
+    angles = (jnp.arange(seq) + offset)[:, None] * freqs[None, :]  # (seq, half)
     cos = jnp.cos(angles)[None, :, None, :]
     sin = jnp.sin(angles)[None, :, None, :]
     x1, x2 = x[..., :half], x[..., half:]
@@ -87,6 +89,35 @@ class AttentionBlock(nnx.Module):
         out = jnp.einsum("bhqk,bkhd->bqhd", attn, v).reshape(batch, seq, dim)
         return x + self.wo(out)
 
+    def decode(
+        self, x: jax.Array, k_cache: jax.Array, v_cache: jax.Array, pos: jax.Array
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        """One token at position `pos`, attending over the cached keys/values.
+
+        The full __call__ recomputes every pairwise score (O(seq^2)); during
+        generation only the new token's row changes, so caching k/v makes a
+        step O(seq). x is (batch, 1, dim); caches are (batch, context,
+        heads, head_dim) and come back updated at `pos`.
+        """
+        batch, _, dim = x.shape
+        h = self.norm(x)
+        q, k, v = jnp.split(self.wqkv(h), 3, axis=-1)
+        q = q.reshape(batch, 1, self.n_heads, self.head_dim)
+        k = k.reshape(batch, 1, self.n_heads, self.head_dim)
+        v = v.reshape(batch, 1, self.n_heads, self.head_dim)
+        q = rope(self.q_norm(q), offset=pos)
+        k = rope(self.k_norm(k), offset=pos)
+        k_cache = jax.lax.dynamic_update_slice_in_dim(k_cache, k, pos, axis=1)
+        v_cache = jax.lax.dynamic_update_slice_in_dim(v_cache, v, pos, axis=1)
+
+        scores = jnp.einsum("bqhd,bkhd->bhqk", q, k_cache) / jnp.sqrt(self.head_dim)
+        mask = jnp.arange(k_cache.shape[1]) <= pos  # causal: only filled slots
+        scores = jnp.where(mask[None, None, None, :], scores, -jnp.inf)
+        attn = jax.nn.softmax(scores, axis=-1)
+
+        out = jnp.einsum("bhqk,bkhd->bqhd", attn, v_cache).reshape(batch, 1, dim)
+        return x + self.wo(out), k_cache, v_cache
+
 
 class Wren(nnx.Module):
     """Byte-in, next-byte-logits-out decoder."""
@@ -109,6 +140,31 @@ class Wren(nnx.Module):
     def n_params(self) -> int:
         return sum(p.size for p in jax.tree.leaves(nnx.state(self, nnx.Param)))
 
+    def init_cache(self, batch: int) -> list[tuple[jax.Array, jax.Array]]:
+        """Empty per-layer (k, v) caches for `decode`."""
+        shape = (
+            batch,
+            self.cfg.context,
+            self.cfg.n_heads,
+            self.cfg.dim // self.cfg.n_heads,
+        )
+        return [(jnp.zeros(shape), jnp.zeros(shape)) for _ in self.blocks]
+
+    def decode(
+        self,
+        tokens: jax.Array,
+        caches: list[tuple[jax.Array, jax.Array]],
+        pos: jax.Array,
+    ) -> tuple[jax.Array, list[tuple[jax.Array, jax.Array]]]:
+        """(batch, 1) tokens at position `pos` -> (batch, vocab) logits,
+        with the caches advanced."""
+        x = self.embed(tokens)
+        updated = []
+        for block, (k, v) in zip(self.blocks, caches):
+            x, k, v = block.decode(x, k, v, pos)
+            updated.append((k, v))
+        return self.embed.attend(self.norm(x))[:, 0], updated
+
 
 @nnx.jit
 def _forward(model: Wren, tokens: jax.Array) -> jax.Array:
@@ -129,8 +185,9 @@ def generate(
     position `pos` invisible. When the window fills we slide it left --
     RoPE only encodes relative distance, so sliding is safe.
 
-    ponytail: recomputes the full window every step (no KV cache); fine at
-    context<=256, add a cache when generation speed starts to matter.
+    ponytail: recomputes the full window every step; fine for the CLI's
+    single prompt. Bulk evaluation uses generate_batch, which decodes
+    through the KV cache instead.
     """
     cfg = model.cfg
     assert 0 < len(prompt) <= cfg.context
@@ -152,6 +209,60 @@ def generate(
                 [buf[:, 1:], jnp.array([[nxt]], dtype=jnp.int32)], axis=1
             )
     return out
+
+
+@nnx.jit
+def _decode_step(
+    model: Wren,
+    tokens: jax.Array,
+    caches: list[tuple[jax.Array, jax.Array]],
+    pos: jax.Array,
+) -> tuple[jax.Array, list[tuple[jax.Array, jax.Array]]]:
+    return model.decode(tokens, caches, pos)
+
+
+def generate_batch(
+    model: Wren,
+    prompts: list[list[int]],
+    n_new: int,
+    stop: tuple[int, ...] = (),
+) -> list[list[int]]:
+    """Greedy-decode continuations for many prompts in one pass.
+
+    One KV-cached decode loop serves the whole batch: prompt tokens are fed
+    in teacher-forced (their logits discarded), then each sample continues
+    with its own argmax tokens, so ragged prompt lengths need no separate
+    prefill pass. Prompts longer than context - n_new lose their head.
+    Returns the generated tokens per prompt, cut after `stop` appears.
+    """
+    cfg = model.cfg
+    prompts = [p[-(cfg.context - n_new) :] for p in prompts]
+    batch, stop_arr = len(prompts), np.array(stop, dtype=np.int32)
+    lens = np.array([len(p) for p in prompts])
+    width = lens.max() + n_new
+    buf = np.zeros((batch, width), dtype=np.int32)
+    for i, p in enumerate(prompts):
+        buf[i, : len(p)] = p
+    caches = model.init_cache(batch)
+    ends = lens + n_new
+    done = np.zeros(batch, dtype=bool)
+    for t in range(width - 1):
+        active = ~done & (t + 1 < ends)
+        if not active.any():
+            break
+        logits, caches = _decode_step(
+            model, jnp.asarray(buf[:, t : t + 1]), caches, jnp.int32(t)
+        )
+        nxt = np.asarray(jnp.argmax(logits, axis=-1), dtype=np.int32)
+        write = active & (t + 1 >= lens)
+        buf[write, t + 1] = nxt[write]
+        for i in np.nonzero(write)[0] if stop else ():
+            if (
+                t + 2 - lens[i] >= len(stop_arr)
+                and (buf[i, t + 2 - len(stop_arr) : t + 2] == stop_arr).all()
+            ):
+                done[i], ends[i] = True, t + 2
+    return [buf[i, lens[i] : ends[i]].tolist() for i in range(batch)]
 
 
 WEIGHTS = pathlib.Path(__file__).parent / "weights.npz"
