@@ -29,8 +29,8 @@ Wren is part of the [Fluksio](https://fluskio.com) automation software.
 Inference reads a prompt from the arguments or stdin and writes the continuation to stdout:
 
 ```sh
-uv run wren "> turn on the lights in the kitchen"
-echo "> what is the temperature in the office" | uv run wren -n 40
+uv run wren "turn on the lights in the kitchen"
+echo "what is the temperature in the office" | uv run wren -n 40
 ```
 
 The trained weights ship inside the package (`wren/weights.npz`), so no training is needed to run the model.
