@@ -74,3 +74,44 @@ def score(predictions: list[str], references: list[list[Call]]) -> dict[str, flo
             2 * precision * recall / (precision + recall) if precision + recall else 0.0
         ),
     }
+
+
+def hallucination_rate(predictions: list[str], surface: dict[str, list[str]]) -> float:
+    """Fraction of call-emitting predictions that name a function, or pass
+    an argument, the tool surface does not define. Malformed and abstaining
+    predictions are excluded -- other metrics count those."""
+    seen = invented = 0
+    for text in predictions:
+        pred = parse_calls(text)
+        if not pred:
+            continue
+        seen += 1
+        invented += any(
+            name not in surface or set(args) - set(surface[name]) for name, args in pred
+        )
+    return invented / seen if seen else 0.0
+
+
+def abstain_rate(predictions: list[str]) -> float:
+    """Fraction of predictions that correctly emit no call at all --
+    irrelevance accuracy when computed over no-call references."""
+    return sum(parse_calls(t) == [] for t in predictions) / len(predictions)
+
+
+def calibration_error(
+    confidences: list[float], corrects: list[bool], bins: int = 10
+) -> float:
+    """Expected calibration error: bin samples by confidence, average
+    |accuracy - mean confidence| over bins weighted by bin size. 0 means
+    the model's confidence predicts its own accuracy perfectly."""
+    ece = 0.0
+    for b in range(bins):
+        lo, hi = b / bins, (b + 1) / bins
+        members = [
+            i for i, c in enumerate(confidences) if lo <= c < hi or (c == 1.0 == hi)
+        ]
+        if members:
+            accuracy = sum(corrects[i] for i in members) / len(members)
+            confidence = sum(confidences[i] for i in members) / len(members)
+            ece += len(members) / len(confidences) * abs(accuracy - confidence)
+    return ece
