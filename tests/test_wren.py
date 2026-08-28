@@ -63,7 +63,7 @@ def test_generate_batch_matches_full_forward():
     cfg = Config(dim=32, n_layers=2, n_heads=2, context=48)
     model = Wren(cfg, rngs=nnx.Rngs(3))
     prompts = [tokenizer.encode("hello world"), tokenizer.encode("hi")]
-    got = generate_batch(model, prompts, n_new=8)
+    got, _ = generate_batch(model, prompts, n_new=8)
     for prompt, out in zip(prompts, got):
         toks = list(prompt)
         for _ in range(8):  # reference: argmax through the uncached forward
@@ -78,5 +78,15 @@ def test_generate_batch_stop_sequence():
     cfg = Config(dim=64, n_layers=2, n_heads=2, context=64)
     model = Wren(cfg, rngs=nnx.Rngs(0))
     train(model, "ab\n\n" * 200, steps=60, batch_size=8, seq_len=16, log_every=1000)
-    [out] = generate_batch(model, [tokenizer.encode("ab")], n_new=20, stop=(10, 10))
+    [out], _ = generate_batch(model, [tokenizer.encode("ab")], n_new=20, stop=(10, 10))
     assert tokenizer.decode(out).endswith("\n\n") and len(out) < 20
+
+
+def test_generate_batch_confidence():
+    from wren.model import generate_batch
+
+    cfg = Config(dim=32, n_layers=2, n_heads=2, context=48)
+    model = Wren(cfg, rngs=nnx.Rngs(3))
+    outs, confs = generate_batch(model, [tokenizer.encode("ab")], n_new=6)
+    assert len(confs) == 1 and 0.0 < confs[0] <= 1.0
+    assert outs == generate_batch(model, [tokenizer.encode("ab")], n_new=6)[0]

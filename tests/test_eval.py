@@ -71,3 +71,41 @@ def test_score_metrics():
     assert results["well_formed"] == 0.6
     assert results["name_accuracy"] == 0.4
     assert 0 < results["arg_f1"] < 1
+
+
+def test_hallucination_rate():
+    from wren.eval import hallucination_rate
+
+    surface = {"lights_on": ["room"]}
+    preds = [
+        ">> lights_on(room='kitchen')",  # fine
+        ">> lights_on(brightness=3)",  # invented argument
+        ">> open_pod_bay_doors()",  # invented function
+        "just chatting",  # abstained: excluded
+    ]
+    assert hallucination_rate(preds, surface) == 2 / 3
+
+
+def test_abstain_rate():
+    from wren.eval import abstain_rate
+
+    assert abstain_rate(["", "some text", ">> call()", ">> broken("]) == 0.5
+
+
+def test_calibration_error():
+    from wren.eval import calibration_error
+
+    perfect = calibration_error([1.0, 1.0, 0.0], [True, True, False], bins=4)
+    assert perfect == 0.0
+    overconfident = calibration_error([0.99, 0.99], [False, False], bins=4)
+    assert overconfident > 0.9
+
+
+def test_irrelevant_split_is_held_out():
+    from wren.dataset import irrelevant
+
+    train, evals = irrelevant(n_train=50, n_eval=10)
+    train_prompts = {p.split("\n")[1] for p, _ in train}
+    eval_prompts = {p.split("\n")[1] for p, _ in evals}
+    assert len(evals) == 10 and not (train_prompts & eval_prompts)
+    assert all(calls == [] for _, calls in train + evals)
