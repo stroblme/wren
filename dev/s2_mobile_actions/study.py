@@ -15,14 +15,30 @@ import fluksio
 from fluksio import Flow, Port, node
 
 
-@node(provides=[Port("train_text", "str"), Port("eval_samples", "json")])
+@node(
+    provides=[
+        Port("train_text", "str"),
+        Port("eval_samples", "json"),
+        Port("neg_prompts", "json"),
+        Port("surface", "json"),
+    ]
+)
 def dataset() -> dict:
-    from wren.dataset import mobile_actions, to_text
+    from wren.dataset import irrelevant, mobile_actions, mobile_actions_surface, to_text
 
     train, evals = mobile_actions()
+    neg_train, neg_eval = irrelevant()
+    # Negatives (~2% of samples) teach abstention: an off-domain prompt is
+    # followed by nothing before the blank-line boundary.
+    import random
+
+    mixed = train + neg_train
+    random.Random(0).shuffle(mixed)
     return {
-        "train_text": to_text(train),
+        "train_text": to_text(mixed),
         "eval_samples": [[p, [[n, a] for n, a in calls]] for p, calls in evals],
+        "neg_prompts": [p for p, _ in neg_eval],
+        "surface": mobile_actions_surface(),
     }
 
 
@@ -30,6 +46,8 @@ def dataset() -> dict:
     requires=[
         Port("train_text", "str"),
         Port("eval_samples", "json"),
+        Port("neg_prompts", "json"),
+        Port("surface", "json"),
         Port("seed", "int"),
         Port("steps", "int"),
         Port("lr", "float"),
@@ -42,12 +60,20 @@ def dataset() -> dict:
         Port("well_formed", "float"),
         Port("name_accuracy", "float"),
         Port("arg_f1", "float"),
+        Port("hallucination", "float"),
+        Port("irrelevance_acc", "float"),
+        Port("ece", "float"),
+        Port("gen_bytes_per_s", "float"),
+        Port("peak_ram_mb", "float"),
+        Port("n_params", "float"),
         Port("weights", "artifact"),
     ],
 )
 def benchmark(
     train_text: str,
     eval_samples: list,
+    neg_prompts: list,
+    surface: dict,
     seed: int,
     steps: int = 2000,
     lr: float = 3e-3,
@@ -57,6 +83,10 @@ def benchmark(
     gen_batch: int = 64,
     n_new: int = 192,
 ) -> dict:
+    import itertools
+    import resource
+    import time
+
     import jax
     import jax.numpy as jnp
     import optax
@@ -64,9 +94,20 @@ def benchmark(
 
     from wren import tokenizer
     from wren.dataset import to_text
-    from wren.eval import score
+    from wren.eval import (
+        abstain_rate,
+        calibration_error,
+        hallucination_rate,
+        parse_calls,
+        score,
+    )
     from wren.model import Config, Wren, generate_batch, save
     from wren.train import sample_batch, train_step
+
+    def own_lines(generated: str) -> str:
+        """The model's continuation up to its first empty line -- past that
+        it is hallucinating the next training sample, not answering."""
+        return "\n".join(itertools.takewhile(bool, generated.split("\n")))
 
     model = Wren(Config(context=768), rngs=nnx.Rngs(seed))
     data = jnp.array(tokenizer.encode(train_text), dtype=jnp.int32)
@@ -99,18 +140,40 @@ def benchmark(
 
     # Greedy generation, KV-cached, a batch of prompts at a time; the
     # blank line the training stream uses as sample boundary is the stop.
-    predictions = []
+    predictions, confidences = [], []
+    started = time.perf_counter()
     for i in range(0, len(samples), gen_batch):
         prompts = [tokenizer.encode(p) for p, _ in samples[i : i + gen_batch]]
-        outs = generate_batch(model, prompts, n_new, stop=(10, 10))
-        predictions += [tokenizer.decode(o).split("\n\n")[0] for o in outs]
+        outs, confs = generate_batch(model, prompts, n_new, stop=(10, 10))
+        predictions += [own_lines(tokenizer.decode(o)) for o in outs]
+        confidences += confs
         print(f"generated {len(predictions)}/{len(samples)}")
-    metrics = score(predictions, [calls for _, calls in samples])
+    references = [calls for _, calls in samples]
+    generated_bytes = sum(len(p.encode()) for p in predictions)
+    metrics = score(predictions, references)
+
+    # Abstention on held-out off-domain prompts (prompt types never trained).
+    neg_out, _ = generate_batch(
+        model, [tokenizer.encode(p) for p in neg_prompts], n_new, stop=(10, 10)
+    )
+    neg_predictions = [own_lines(tokenizer.decode(o)) for o in neg_out]
 
     path = pathlib.Path(tempfile.mkdtemp()) / "weights.npz"
     save(model, path)
     ref = fluksio.save_artifact(path.read_bytes(), name="weights.npz")
-    return {"final_loss": loss, "bits_per_byte": bpb, "weights": ref} | metrics
+    return {
+        "final_loss": loss,
+        "bits_per_byte": bpb,
+        "hallucination": hallucination_rate(predictions, surface),
+        "irrelevance_acc": abstain_rate(neg_predictions),
+        "ece": calibration_error(
+            confidences, [parse_calls(p) == r for p, r in zip(predictions, references)]
+        ),
+        "gen_bytes_per_s": generated_bytes / (time.perf_counter() - started),
+        "peak_ram_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024,
+        "n_params": float(model.n_params()),
+        "weights": ref,
+    } | metrics
 
 
 Flow(
@@ -122,5 +185,16 @@ Flow(
         Port("steps", "int", initial=2000),
         Port("lr", "float", initial=3e-3),
     ],
-    outputs=["exact_match", "well_formed", "name_accuracy", "arg_f1", "bits_per_byte"],
+    outputs=[
+        "exact_match",
+        "well_formed",
+        "name_accuracy",
+        "arg_f1",
+        "bits_per_byte",
+        "hallucination",
+        "irrelevance_acc",
+        "ece",
+        "gen_bytes_per_s",
+        "peak_ram_mb",
+    ],
 )
