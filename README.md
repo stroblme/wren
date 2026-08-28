@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/wren)](https://pypi.org/project/wren/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Wren is a tiny foundation model that can run with on a CPU and less than 1GB of RAM.
+Wren is a tiny foundation model that can run with on a CPU and less than 1GB of RAM (inference).
 Designed to be called to perform actions which require RAG knowledge, as e.g. in facility automation, where highly customized and specialized devices are located.
 
 It should be capable of making tool calls and reading values like
