@@ -11,6 +11,7 @@ External datasets (downloaded on demand into data/, gitignored):
   later stages that grow the context to hold device state.
 """
 
+import datetime
 import json
 import pathlib
 import random
@@ -186,11 +187,71 @@ def mobile_actions() -> tuple[list[Sample], list[Sample]]:
 
 
 def to_text(samples: list[Sample]) -> str:
-    """Samples as one training stream, blank lines marking the boundaries."""
+    """Samples as one training stream, blank lines marking the boundaries.
+    A sample without calls (irrelevance: the model should abstain) is just
+    its prompt."""
     return "\n".join(
-        prompt + "\n".join(render_call(n, a) for n, a in calls) + "\n"
+        prompt
+        + ("\n".join(render_call(n, a) for n, a in calls) + "\n" if calls else "")
         for prompt, calls in samples
     )
+
+
+def mobile_actions_surface() -> dict[str, list[str]]:
+    """{function name: parameter names} from the dataset's tool schemas --
+    the reference for the hallucination metric."""
+    [path] = fetch("mobile_actions")
+    with open(path) as lines:
+        row = json.loads(next(lines))
+    return {
+        t["function"]["name"]: sorted(t["function"]["parameters"].get("properties", {}))
+        for t in row["tools"]
+    }
+
+
+# Off-domain prompts the model must NOT answer with a tool call. Synthetic
+# because mobile-actions contains no negatives; same prompt format as the
+# positives (timestamp line included) so abstention can't key on format.
+_IRRELEVANT = {
+    "{}": ["hello there", "good morning", "thanks a lot", "why is the sky blue"],
+    "what is the capital of {}": ["France", "Japan", "Brazil", "Egypt", "Norway"],
+    "who wrote {}": ["Faust", "Hamlet", "Dune", "1984"],
+    "what does {} mean": ["photosynthesis", "entropy", "inflation"],
+    "tell me a joke about {}": ["cats", "programmers", "pirates"],
+    "how do I cook {}": ["rice", "pasta", "lentils"],
+    "what is {}": ["17 times 23", "the square root of 81", "a prime number"],
+    "do you like {}": ["music", "rain", "mondays"],
+    "translate {} to French": ["hello", "thank you", "good night"],
+    "recommend a good {}": ["book", "movie", "podcast"],
+    "how far away is {}": ["the moon", "the sun", "Mars"],
+}
+
+
+def irrelevant(
+    n_train: int = 200, n_eval: int = 40
+) -> tuple[list[Sample], list[Sample]]:
+    """(train, eval) no-call samples; the eval prompts are types never seen
+    in training, so abstention has to generalize."""
+    rng = random.Random(0)
+    unique = [t.format(s) for t, slots in _IRRELEVANT.items() for s in slots]
+    rng.shuffle(unique)
+    held, seen = unique[:8], unique[8:]
+
+    def build(prompts: list[str], n: int) -> list[Sample]:
+        samples = []
+        for i in range(n):
+            when = datetime.datetime(
+                2024, 1, 1, tzinfo=datetime.UTC
+            ) + datetime.timedelta(
+                days=rng.randrange(730),
+                hours=rng.randrange(24),
+                minutes=rng.randrange(60),
+            )
+            stamp = f"{when:%Y-%m-%dT%H:%M:%S} {when:%A}"
+            samples.append((f"{stamp}\n{prompts[i % len(prompts)]}\n", []))
+        return samples
+
+    return build(seen, n_train), build(held, n_eval)
 
 
 def home_assistant() -> tuple[pathlib.Path, pathlib.Path]:
