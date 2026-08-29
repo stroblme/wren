@@ -254,8 +254,33 @@ def irrelevant(
     return build(seen, n_train), build(held, n_eval)
 
 
-def home_assistant() -> tuple[pathlib.Path, pathlib.Path]:
-    """Download; return the (train, test) jsonl paths. Rendering into
-    Wren's format is deferred to the stage that trains on it."""
+# The service calls in an assistant reply, one JSON object per line.
+_HA_CALLS = re.compile(r"```homeassistant\n(.*?)```", re.DOTALL)
+
+
+def _render_home_assistant(row: dict) -> Sample:
+    """Prompt is the user request alone -- the 38-service surface lives in
+    the weights (implicit-tool mode), and the original system message's
+    device list is dropped: holding device state in context is a later
+    stage. Calls keep their native dotted service names."""
+    turns = {t["from"]: t["value"] for t in row["conversations"]}
+    calls = []
+    for block in _HA_CALLS.findall(turns["assistant"]):
+        for line in filter(str.strip, block.splitlines()):
+            call = json.loads(line)
+            calls.append((call.pop("service"), call))
+    return f"{turns['user']}\n", calls
+
+
+def home_assistant() -> tuple[list[Sample], list[Sample]]:
+    """(train, test) samples. Rows whose reply carries no service call are
+    dropped: they answer status questions from the device list we do not
+    include."""
+
+    def load(path: pathlib.Path) -> list[Sample]:
+        with open(path) as lines:
+            rows = (_render_home_assistant(json.loads(line)) for line in lines)
+            return [(prompt, calls) for prompt, calls in rows if calls]
+
     train, test = fetch("home_assistant")
-    return train, test
+    return load(train), load(test)

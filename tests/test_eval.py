@@ -29,15 +29,44 @@ MA_ROW = {
 }
 
 
+HA_ROW = {
+    "conversations": [
+        {"from": "system", "value": "You are 'Al' ...\nServices: ...\nDevices:\n..."},
+        {"from": "user", "value": "lower the kitchen blinds"},
+        {
+            "from": "assistant",
+            "value": "closing the blinds as you requested.\n"
+            '```homeassistant\n{"service": "cover.close", '
+            '"target_device": "cover.kitchen"}\n```',
+        },
+    ]
+}
+
+
 def test_render_parse_roundtrip():
     call = ("send_email", {"to": "a@b.c", "subject": "hi there"})
+    assert parse_calls(render_call(*call)) == [call]
+
+
+def test_parse_dotted_names():
+    call = ("light.turn_on", {"brightness": 50, "target_device": "light.porch"})
     assert parse_calls(render_call(*call)) == [call]
 
 
 def test_parse_rejects_malformed():
     assert parse_calls(">> send_email(to='unterminated") is None
     assert parse_calls(">> send_email('positional')") is None
+    assert parse_calls(">> get()(x=1)") is None
     assert parse_calls("no call marker at all") == []
+
+
+def test_render_home_assistant():
+    from wren.dataset import _render_home_assistant
+
+    prompt, calls = _render_home_assistant(HA_ROW)
+    assert prompt == "lower the kitchen blinds\n"
+    assert calls == [("cover.close", {"target_device": "cover.kitchen"})]
+    assert parse_calls(to_text([(prompt, calls)])) == calls
 
 
 def test_render_mobile_actions():

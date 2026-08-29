@@ -15,6 +15,7 @@ Call = tuple[str, dict]
 
 def parse_calls(text: str) -> list[Call] | None:
     """Extract `>> name(key='value', ...)` lines into (name, args) pairs.
+    Names may be dotted (`lights.on`, Home Assistant's `cover.close`).
 
     Returns None when any `>> ` line fails to parse as a plain call with
     literal keyword arguments -- the sample is then not well-formed.
@@ -27,9 +28,13 @@ def parse_calls(text: str) -> list[Call] | None:
             continue
         try:
             expr = ast.parse(line[3:].strip(), mode="eval").body
+            if not isinstance(expr, ast.Call):
+                return None
+            func = expr.func
+            while isinstance(func, ast.Attribute):  # peel `a.b.c` to its root
+                func = func.value
             if (
-                not isinstance(expr, ast.Call)
-                or not isinstance(expr.func, ast.Name)
+                not isinstance(func, ast.Name)
                 or expr.args
                 or any(kw.arg is None for kw in expr.keywords)
             ):
@@ -37,7 +42,7 @@ def parse_calls(text: str) -> list[Call] | None:
             args = {kw.arg: ast.literal_eval(kw.value) for kw in expr.keywords}
         except (SyntaxError, ValueError):
             return None
-        calls.append((expr.func.id, args))
+        calls.append((ast.unparse(expr.func), args))
     return calls
 
 

@@ -15,6 +15,28 @@ from wren import tokenizer
 from wren.model import Wren
 
 
+def muon(lr: float) -> optax.GradientTransformation:
+    """Wren's default optimizer since the s3 bake-off (RESEARCH.md): Muon
+    preconditions the attention matrices; the tied embedding (also 2D) and
+    the norm scales fall through to its inner AdamW, standard practice."""
+
+    def hidden_matrices(params: dict) -> dict:
+        return jax.tree_util.tree_map_with_path(
+            lambda path, p: (
+                optax.contrib.MuonDimensionNumbers()
+                if p.ndim == 2 and "embed" not in jax.tree_util.keystr(path)
+                else None
+            ),
+            params,
+        )
+
+    # ty: muon's annotation omits the callable form its source handles
+    return optax.contrib.muon(
+        lr,
+        muon_weight_dimension_numbers=hidden_matrices,  # ty: ignore[invalid-argument-type]
+    )
+
+
 def sample_batch(
     data: jax.Array, batch_size: int, seq_len: int, key: jax.Array
 ) -> tuple[jax.Array, jax.Array]:
@@ -50,7 +72,7 @@ def train(
 ) -> list[float]:
     """Train in place on a text corpus; returns the loss at every step."""
     data = jnp.array(tokenizer.encode(text), dtype=jnp.int32)
-    optimizer = nnx.Optimizer(model, optax.adamw(lr), wrt=nnx.Param)
+    optimizer = nnx.Optimizer(model, muon(lr), wrt=nnx.Param)
     key = jax.random.PRNGKey(0)
     losses = []
     for step in range(steps):
