@@ -5,6 +5,10 @@ is the timestamp line plus the user request. Scored with ordered strict
 exact match (needle's protocol) plus its diagnostic companions, and
 bits-per-byte as the language-model-level metric. Reference points on this
 dataset: needle 2 (45M params) 63.7%, FunctionGemma 270M (fine-tuned).
+
+The training node declares `resources={"gpus": 1}`; the engine must know
+the card is there or it trains on the CPU. `.fluksio/env` carries
+`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
 """
 
 import math
@@ -68,6 +72,10 @@ def dataset() -> dict:
         Port("n_params", "float"),
         Port("weights", "artifact"),
     ],
+    # preallocate=false: jax otherwise takes 75% of the card at import, so a
+    # second engine (a `--local` run beside a running `serve`) collides with
+    # this one instead of fitting beside it.
+    resources={"gpus": 1, "env": {"XLA_PYTHON_CLIENT_PREALLOCATE": "false"}},
 )
 def benchmark(
     train_text: str,
@@ -84,6 +92,7 @@ def benchmark(
     n_new: int = 192,
 ) -> dict:
     import itertools
+    import os
     import resource
     import time
 
@@ -103,6 +112,11 @@ def benchmark(
     )
     from wren.model import Config, Wren, generate_batch, save
     from wren.train import sample_batch, train_step
+
+    # An unsatisfiable `gpus: 1` arrives as CUDA_VISIBLE_DEVICES="" and would
+    # train on the CPU without saying so; fail instead.
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
+        raise RuntimeError("no card declared: `fluksio serve --gpus 1`")
 
     def own_lines(generated: str) -> str:
         """The model's continuation up to its first empty line -- past that

@@ -4,11 +4,13 @@ Fixed step budget, matched tuning effort: one LR sweep per optimizer (the
 grids differ because their step scales differ), then >=3 seeds at each
 winner, then depth 16 at the winners for the depth question.
 
-Pass every varied input explicitly -- inputs left at their initial value are
-recorded as `{}`, leaving blank columns in `fluksio export runs`. The engine
-must run with `--max-runs 1`: concurrent jax workers each preallocate ~75%
-of VRAM and kill each other's cublas init, and a `resources={"gpus": 1}`
-declaration does not serialize them (the local engine tracks only CPU).
+The training node declares `resources={"gpus": 1}`, which is what serializes
+the arms: concurrent jax workers each preallocate ~75% of VRAM and kill each
+other's cublas init. The engine must know the card is there, or the
+declaration is clamped to zero and the worker is handed
+CUDA_VISIBLE_DEVICES="" -- training then runs on the CPU. `.fluksio/env`
+carries `FLOW_GPUS=1` for this checkout; elsewhere start it with
+`fluksio serve --gpus 1`.
 
     uv run fluksio sweep s3_optimizers --param optimizer=adamw --param lr=3e-4,1e-3,3e-3,1e-2 --param seed=0
     uv run fluksio sweep s3_optimizers --param optimizer=muon --param lr=3e-3,1e-2,3e-2,1e-1 --param seed=0
@@ -76,6 +78,10 @@ def dataset() -> dict:
         Port("arg_f1", "float"),
         Port("weights", "artifact"),
     ],
+    # preallocate=false: jax otherwise takes 75% of the card at import, so a
+    # second engine (a `--local` run beside a running `serve`) collides with
+    # this one instead of fitting beside it.
+    resources={"gpus": 1, "env": {"XLA_PYTHON_CLIENT_PREALLOCATE": "false"}},
 )
 def bakeoff(
     train_text: str,
@@ -91,6 +97,8 @@ def bakeoff(
     gen_batch: int = 64,
     n_new: int = 192,
 ) -> dict:
+    import os
+
     import jax
     import jax.numpy as jnp
     import optax
@@ -101,6 +109,11 @@ def bakeoff(
     from wren.eval import score
     from wren.model import Config, Wren, generate_batch, save
     from wren.train import sample_batch, train_step
+
+    # An unsatisfiable `gpus: 1` arrives as CUDA_VISIBLE_DEVICES="" and would
+    # train on the CPU without saying so; fail instead.
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
+        raise RuntimeError("no card declared: `fluksio serve --gpus 1`")
 
     # context 384: longest prompt (151 B) + n_new fit; longest sample 330 B.
     model = Wren(Config(context=384, n_layers=depth), rngs=nnx.Rngs(seed))

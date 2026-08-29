@@ -4,6 +4,10 @@ Declared as a fluksio flow: `uv run fluksio run s1_baseline --follow` with
 the project-local engine (`uv run fluksio serve`) running. The nodes stay
 plain functions, so `python -c "from study import baseline; ..."` still
 works for debugging — fluksio.emit is a no-op outside a worker.
+
+The training node declares `resources={"gpus": 1}`; the engine must know
+the card is there or it trains on the CPU. `.fluksio/env` carries
+`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
 """
 
 import pathlib
@@ -44,6 +48,10 @@ def corpus(copies: int = 40) -> str:
         Port("accuracy", "float"),
         Port("weights", "artifact"),
     ],
+    # preallocate=false: jax otherwise takes 75% of the card at import, so a
+    # second engine (a `--local` run beside a running `serve`) collides with
+    # this one instead of fitting beside it.
+    resources={"gpus": 1, "env": {"XLA_PYTHON_CLIENT_PREALLOCATE": "false"}},
 )
 def baseline(
     corpus: str,
@@ -54,6 +62,8 @@ def baseline(
     lr: float = 3e-3,
     log_every: int = 25,
 ) -> dict:
+    import os
+
     import jax
     import jax.numpy as jnp
     import optax
@@ -62,6 +72,11 @@ def baseline(
     from wren import tokenizer
     from wren.model import Config, Wren, generate, save
     from wren.train import sample_batch, train_step
+
+    # An unsatisfiable `gpus: 1` arrives as CUDA_VISIBLE_DEVICES="" and would
+    # train on the CPU without saying so; fail instead.
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
+        raise RuntimeError("no card declared: `fluksio serve --gpus 1`")
 
     model = Wren(Config(), rngs=nnx.Rngs(seed))
     data = jnp.array(tokenizer.encode(corpus), dtype=jnp.int32)
