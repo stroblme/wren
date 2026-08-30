@@ -30,7 +30,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-fluksio = { git = "https://git.stroblme.de/Fluksio/app", rev = "68d2565054060e1813ba0a314fbacacaee52e95e", subdirectory = "backend" }
+fluksio = { git = "https://git.stroblme.de/Fluksio/app", rev = "989d008d37b9dc25fc28c1fa0342a8139e6ed74e", subdirectory = "backend" }
 kfac-jax = { git = "https://github.com/google-deepmind/kfac-jax" }
 
 [build-system]

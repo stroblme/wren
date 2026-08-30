@@ -790,7 +790,7 @@ wheels = [
 [[package]]
 name = "fluksio"
 version = "0.1.4+dev"
-source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=68d2565054060e1813ba0a314fbacacaee52e95e#68d2565054060e1813ba0a314fbacacaee52e95e" }
+source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=989d008d37b9dc25fc28c1fa0342a8139e6ed74e#989d008d37b9dc25fc28c1fa0342a8139e6ed74e" }
 dependencies = [
     { name = "alembic" },
     { name = "croniter" },
@@ -818,7 +818,7 @@ dependencies = [
 [[package]]
 name = "fluksio-worker"
 version = "0.1.4+dev"
-source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=worker&rev=68d2565054060e1813ba0a314fbacacaee52e95e#68d2565054060e1813ba0a314fbacacaee52e95e" }
+source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=worker&rev=989d008d37b9dc25fc28c1fa0342a8139e6ed74e#989d008d37b9dc25fc28c1fa0342a8139e6ed74e" }
 dependencies = [
     { name = "websockets" },
 ]
@@ -3459,7 +3459,7 @@ provides-extras = ["gpu"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "fluksio", git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=68d2565054060e1813ba0a314fbacacaee52e95e" },
+    { name = "fluksio", git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=989d008d37b9dc25fc28c1fa0342a8139e6ed74e" },
     { name = "kfac-jax", git = "https://github.com/google-deepmind/kfac-jax" },
     { name = "matplotlib", specifier = ">=3.11.1" },
     { name = "pytest", specifier = ">=9.1.1" },
