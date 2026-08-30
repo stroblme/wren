@@ -790,7 +790,7 @@ wheels = [
 [[package]]
 name = "fluksio"
 version = "0.1.4+dev"
-source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=989d008d37b9dc25fc28c1fa0342a8139e6ed74e#989d008d37b9dc25fc28c1fa0342a8139e6ed74e" }
+source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=f370601aec3b92a52f363e839e2b5797f17b13d7#f370601aec3b92a52f363e839e2b5797f17b13d7" }
 dependencies = [
     { name = "alembic" },
     { name = "croniter" },
@@ -798,6 +798,7 @@ dependencies = [
     { name = "email-validator" },
     { name = "fastapi", extra = ["standard"] },
     { name = "fluksio-worker" },
+    { name = "http-ece" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "mcp" },
@@ -813,12 +814,13 @@ dependencies = [
     { name = "sqlmodel" },
     { name = "textual" },
     { name = "uv" },
+    { name = "websockets" },
 ]
 
 [[package]]
 name = "fluksio-worker"
 version = "0.1.4+dev"
-source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=worker&rev=989d008d37b9dc25fc28c1fa0342a8139e6ed74e#989d008d37b9dc25fc28c1fa0342a8139e6ed74e" }
+source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=worker&rev=f370601aec3b92a52f363e839e2b5797f17b13d7#f370601aec3b92a52f363e839e2b5797f17b13d7" }
 dependencies = [
     { name = "websockets" },
 ]
@@ -945,6 +947,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
 ]
+
+[[package]]
+name = "http-ece"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7c/af/249d1576653b69c20b9ac30e284b63bd94af6a175d72d87813235caf2482/http_ece-1.2.1.tar.gz", hash = "sha256:8c6ab23116bbf6affda894acfd5f2ca0fb8facbcbb72121c11c75c33e7ce8cff", size = 8830, upload-time = "2024-08-08T00:10:47.301Z" }
 
 [[package]]
 name = "httpcore"
@@ -3459,7 +3470,7 @@ provides-extras = ["gpu"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "fluksio", git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=989d008d37b9dc25fc28c1fa0342a8139e6ed74e" },
+    { name = "fluksio", git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=f370601aec3b92a52f363e839e2b5797f17b13d7" },
     { name = "kfac-jax", git = "https://github.com/google-deepmind/kfac-jax" },
     { name = "matplotlib", specifier = ">=3.11.1" },
     { name = "pytest", specifier = ">=9.1.1" },
