@@ -13,13 +13,11 @@ dependencies = [
     "optax>=0.2.8",
 ]
 
-[project.optional-dependencies]
-gpu = ["jax[cuda12]>=0.11.1"]
-
 [project.scripts]
 wren = "wren.cli:main"
 
 [dependency-groups]
+gpu = ["jax[cuda12]>=0.11.1"]
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.5",

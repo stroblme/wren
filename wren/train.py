@@ -6,6 +6,8 @@ readings, learned behaviors) is built on this one objective -- the data,
 not the loss function, is what changes per capability.
 """
 
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 import optax
@@ -64,13 +66,18 @@ def train_step(
 def train(
     model: Wren,
     text: str,
-    steps: int = 4000,
-    batch_size: int = 32,
+    steps: int = 1000,
+    batch_size: int = 64,
     seq_len: int = 128,
-    lr: float = 3e-3,
+    lr: float = 1e-3,
     log_every: int = 25,
+    on_log: Callable[[int, float], None] | None = None,
 ) -> list[float]:
-    """Train in place on a text corpus; returns the loss at every step."""
+    """Train in place on a text corpus; returns the loss at every step.
+
+    `on_log` sees every logged step, which is how the fluksio node streams
+    the curve without duplicating this loop (wren/flow.py).
+    """
     data = jnp.array(tokenizer.encode(text), dtype=jnp.int32)
     optimizer = nnx.Optimizer(model, muon(lr), wrt=nnx.Param)
     key = jax.random.PRNGKey(0)
@@ -82,4 +89,6 @@ def train(
         losses.append(loss)
         if step % log_every == 0 or step == steps - 1:
             print(f"step {step:4d}  loss {loss:.3f}")
+            if on_log is not None:
+                on_log(step, loss)
     return losses

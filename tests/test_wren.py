@@ -90,3 +90,19 @@ def test_generate_batch_confidence():
     outs, confs = generate_batch(model, [tokenizer.encode("ab")], n_new=6)
     assert len(confs) == 1 and 0.0 < confs[0] <= 1.0
     assert outs == generate_batch(model, [tokenizer.encode("ab")], n_new=6)[0]
+
+
+def test_train_flags_match_the_flow_and_train_defaults():
+    """The three places a training parameter is spelled must agree."""
+    import inspect
+
+    from wren import flow
+
+    defaults = {
+        name: parameter.default
+        for name, parameter in inspect.signature(train).parameters.items()
+        if parameter.default is not inspect.Parameter.empty and name != "on_log"
+    }
+    assert list(cli.TRAIN_PARAMS) == list(defaults)
+    assert {port.name: port.initial for port in flow.PARAMS} == defaults
+    assert {port.name: type(port.initial) for port in flow.PARAMS} == cli.TRAIN_PARAMS

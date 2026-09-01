@@ -790,7 +790,7 @@ wheels = [
 [[package]]
 name = "fluksio"
 version = "0.1.4+dev"
-source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=bdad6d7fc227ed45f298bdcff04a977abc4f0dc2#bdad6d7fc227ed45f298bdcff04a977abc4f0dc2" }
+source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=8a94bf10d79f7eacc97ad32719a4c00a43d3a317#8a94bf10d79f7eacc97ad32719a4c00a43d3a317" }
 dependencies = [
     { name = "alembic" },
     { name = "croniter" },
@@ -820,7 +820,7 @@ dependencies = [
 [[package]]
 name = "fluksio-worker"
 version = "0.1.4+dev"
-source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=worker&rev=bdad6d7fc227ed45f298bdcff04a977abc4f0dc2#bdad6d7fc227ed45f298bdcff04a977abc4f0dc2" }
+source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=worker&rev=8a94bf10d79f7eacc97ad32719a4c00a43d3a317#8a94bf10d79f7eacc97ad32719a4c00a43d3a317" }
 dependencies = [
     { name = "websockets" },
 ]
@@ -3444,11 +3444,6 @@ dependencies = [
     { name = "optax" },
 ]
 
-[package.optional-dependencies]
-gpu = [
-    { name = "jax", extra = ["cuda12"] },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "fluksio" },
@@ -3458,25 +3453,27 @@ dev = [
     { name = "ruff" },
     { name = "ty" },
 ]
+gpu = [
+    { name = "jax", extra = ["cuda12"] },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "flax", specifier = ">=0.12.9" },
     { name = "jax", specifier = ">=0.11.1" },
-    { name = "jax", extras = ["cuda12"], marker = "extra == 'gpu'", specifier = ">=0.11.1" },
     { name = "optax", specifier = ">=0.2.8" },
 ]
-provides-extras = ["gpu"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "fluksio", git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=bdad6d7fc227ed45f298bdcff04a977abc4f0dc2" },
+    { name = "fluksio", git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=8a94bf10d79f7eacc97ad32719a4c00a43d3a317" },
     { name = "kfac-jax", git = "https://github.com/google-deepmind/kfac-jax" },
     { name = "matplotlib", specifier = ">=3.11.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.16.5" },
     { name = "ty", specifier = ">=0.0.75" },
 ]
+gpu = [{ name = "jax", extras = ["cuda12"], specifier = ">=0.11.1" }]
 
 [[package]]
 name = "zipp"

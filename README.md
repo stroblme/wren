@@ -39,7 +39,13 @@ Retraining overwrites them:
 ```sh
 uv run wren --train             # built-in demo corpus
 uv run wren --train corpus.txt  # any UTF-8 text file
+uv run wren --train --steps 2000 --lr 3e-3   # train() parameters, one flag each
 ```
+
+Training runs on the project-local [fluksio](https://fluskio.com) engine
+(`uv run fluksio serve`), which records the parameters, the loss curve and the
+weights of every run; `--train` downloads the weights it produced into the
+package. `fluksio export runs --flow wren_train` is the history.
 
 ## Architecture
 
