@@ -68,8 +68,8 @@ def train_step(
 def train(
     model: Wren,
     text: str,
-    steps: int = 500,
-    batch_size: int = 128,
+    steps: int = 2000,
+    batch_size: int = 256,
     seq_len: int = 128,
     lr: float = 1e-3,
     on_log: Callable[[int, float], None] | None = None,
