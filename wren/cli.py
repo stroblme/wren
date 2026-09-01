@@ -17,18 +17,7 @@ from typing import Any
 
 from wren import tokenizer
 from wren.model import WEIGHTS, generate, load
-
-#: `--steps 2000`, `--lr 3e-3`, ... — `train()`'s parameters, which are the
-#: flow's inputs bar the corpus that `--train CORPUS` already carries. Named
-#: here rather than read off the flow so `wren <prompt>` needs no fluksio; a
-#: test pins the two together.
-TRAIN_PARAMS = {
-    "steps": int,
-    "batch_size": int,
-    "seq_len": int,
-    "lr": float,
-    "log_every": int,
-}
+from wren.train import DEFAULTS
 
 
 def main() -> None:
@@ -45,13 +34,15 @@ def main() -> None:
         "-n", "--tokens", type=int, default=64, help="bytes to generate"
     )
     parser.add_argument("-t", "--temperature", type=float, default=0.1)
-    for name, kind in TRAIN_PARAMS.items():
-        # Left unset, so an unmentioned parameter takes the flow's own value
-        # and the run records which of the two the number came from.
+    # `--dim`, `--steps`, `--lr`, ... — one flag per knob, from the one place
+    # its default lives. Every value is sent, so the run records the whole
+    # configuration rather than only what was said out loud.
+    for name, default in DEFAULTS.items():
         parser.add_argument(
             f"--{name.replace('_', '-')}",
-            type=kind,
-            help=f"training: {name} (default: the flow's)",
+            type=type(default),
+            default=default,
+            help=f"training: {name} (default: %(default)s)",
         )
     args = parser.parse_args()
 
@@ -86,11 +77,7 @@ def train_run(args: argparse.Namespace) -> None:
     params: dict[str, Any] = {
         "corpus": str(pathlib.Path(args.train).resolve()) if args.train else ""
     }
-    params |= {
-        name: getattr(args, name)
-        for name in TRAIN_PARAMS
-        if getattr(args, name) is not None
-    }
+    params |= {name: getattr(args, name) for name in DEFAULTS}
 
     try:
         client = Client()
@@ -113,24 +100,26 @@ def train_run(args: argparse.Namespace) -> None:
         sys.exit(f"fluksio: {exc} (is `uv run fluksio serve` running?)")
 
     WEIGHTS.write_bytes(weights)
-    log(f"final loss {handle.result['final_loss']:.3f}; saved {WEIGHTS}")
+    result = handle.result
+    log(
+        f"{result['n_params']:,.0f} params, final loss "
+        f"{result['final_loss']:.3f}; saved {WEIGHTS}"
+    )
 
 
 def follow(client: Any, handle: Any, poll: float = 2.0) -> None:
-    """Print the run's loss readings as the engine records them.
+    """Wait for the run, reporting where its loss has got to as it goes.
 
-    The status is read before the numbers, so the last batch is never the one
-    that gets missed. The step a reading carries is the engine's count of
-    them, not the training step -- the node's own `step` lines are in the
-    run's logs.
+    The latest reading per poll rather than every one of them: the node
+    reports a loss per step, and the whole curve is on the engine either way.
+    The status is read before the numbers, so the last reading is never the
+    one that gets missed.
     """
-    seen = 0
     while True:
         done = handle.refresh().done
         points = client.metrics(handle.id)
-        for point in points[seen:]:
-            log(f"loss[{point['step']:3d}]  {point['value']:.3f}")
-        seen = len(points)
+        if points:
+            log(f"step {len(points):4d}  loss {points[-1]['value']:.3f}")
         if done:
             return
         time.sleep(poll)

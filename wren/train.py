@@ -6,7 +6,9 @@ readings, learned behaviors) is built on this one objective -- the data,
 not the loss function, is what changes per capability.
 """
 
+import inspect
 from collections.abc import Callable
+from dataclasses import fields
 
 import jax
 import jax.numpy as jnp
@@ -14,7 +16,7 @@ import optax
 from flax import nnx
 
 from wren import tokenizer
-from wren.model import Wren
+from wren.model import Config, Wren
 
 
 def muon(lr: float) -> optax.GradientTransformation:
@@ -66,11 +68,10 @@ def train_step(
 def train(
     model: Wren,
     text: str,
-    steps: int = 1000,
-    batch_size: int = 64,
+    steps: int = 500,
+    batch_size: int = 128,
     seq_len: int = 128,
     lr: float = 1e-3,
-    log_every: int = 25,
     on_log: Callable[[int, float], None] | None = None,
 ) -> list[float]:
     """Train in place on a text corpus; returns the loss at every step.
@@ -87,8 +88,23 @@ def train(
         x, y = sample_batch(data, batch_size, seq_len, sub)
         loss = float(train_step(model, optimizer, x, y))
         losses.append(loss)
-        if step % log_every == 0 or step == steps - 1:
-            print(f"step {step:4d}  loss {loss:.3f}")
-            if on_log is not None:
-                on_log(step, loss)
+        if on_log is not None:
+            on_log(step, loss)
     return losses
+
+
+#: Every knob `wren --train` exposes, and the one place its default lives:
+#: the model's shape, then training's own arguments. Read off `Config` and
+#: the signature above rather than listed again, so editing either is the
+#: whole change -- the CLI turns each into a `--flag`, the flow into an input
+#: (wren/flow.py), and the run records what it was given.
+DEFAULTS: dict[str, int | float] = {
+    field.name: field.default
+    for field in fields(Config)
+    # vocab_size is the byte tokenizer's business, not a knob.
+    if field.name != "vocab_size" and isinstance(field.default, int | float)
+} | {
+    name: parameter.default
+    for name, parameter in inspect.signature(train).parameters.items()
+    if isinstance(parameter.default, int | float)
+}

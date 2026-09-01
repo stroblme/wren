@@ -39,13 +39,17 @@ Retraining overwrites them:
 ```sh
 uv run wren --train             # built-in demo corpus
 uv run wren --train corpus.txt  # any UTF-8 text file
-uv run wren --train --steps 2000 --lr 3e-3   # train() parameters, one flag each
+uv run wren --train --steps 2000 --lr 3e-3   # one flag per knob
+uv run wren --train --dim 256 --n-layers 8   # the model's shape included
 ```
 
 Training runs on the project-local [fluksio](https://fluskio.com) engine
-(`uv run fluksio serve`), which records the parameters, the loss curve and the
-weights of every run; `--train` downloads the weights it produced into the
-package. `fluksio export runs --flow wren_train` is the history.
+(`uv run fluksio serve`), which records what every run was given — the model's
+shape, the training parameters, the loss curve, the resulting parameter count
+— and the weights it produced, which `--train` downloads into the package.
+`fluksio export runs --flow wren_train` is the history. Each knob defaults to
+`wren.train.DEFAULTS`, which is `Config` plus `train()`'s signature and the
+only place those numbers are written down.
 
 ## Architecture
 

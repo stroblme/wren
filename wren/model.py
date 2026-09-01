@@ -27,10 +27,10 @@ from wren.tokenizer import VOCAB_SIZE
 @dataclass
 class Config:
     vocab_size: int = VOCAB_SIZE
-    dim: int = 256  # width of the residual stream
-    n_layers: int = 8  # attention-only: spend depth here, not in MLPs
+    dim: int = 128  # width of the residual stream
+    n_layers: int = 12  # attention-only: spend depth here, not in MLPs
     n_heads: int = 4
-    context: int = 256  # maximum sequence length
+    context: int = 128  # maximum sequence length
 
 
 def rope(x: jax.Array, offset: jax.Array | int = 0) -> jax.Array:

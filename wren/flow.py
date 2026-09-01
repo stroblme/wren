@@ -6,9 +6,10 @@ reported, and the weights it produced. The node is a thin wrapper around
 `wren.train.train`, so the library itself stays fluksio-free and a plain
 `train(model, text)` keeps working.
 
-Flow *inputs* rather than node settings, because `fluksio sweep --param`
-varies inputs (DECISIONS.md); their initials mirror `train()`'s defaults,
-which a test pins.
+Every knob is a flow *input* rather than a node setting, because
+`fluksio sweep --param` varies inputs (DECISIONS.md), and its default comes
+from `wren.train.DEFAULTS` -- the model shape included, so a run records the
+model it trained instead of whatever `Config` happened to say on the worker.
 """
 
 import pathlib
@@ -17,23 +18,23 @@ import tempfile
 import fluksio
 from fluksio import Flow, Port, node
 
+from wren.train import DEFAULTS
+
 NAME = "wren_train"
 
-#: The flow's knobs, in `train()`'s order. The CLI turns each into `--name`.
-PARAMS = [
-    Port("steps", "int", initial=1000),
-    Port("batch_size", "int", initial=64),
-    Port("seq_len", "int", initial=128),
-    Port("lr", "float", initial=1e-3),
-    Port("log_every", "int", initial=25),
+#: One input per knob; the CLI spells the same names `--dim`, `--lr`, ...
+PORTS = [
+    Port(name, "float" if isinstance(default, float) else "int", initial=default)
+    for name, default in DEFAULTS.items()
 ]
 
 
 @node(
-    requires=[Port("corpus", "str"), *(Port(p.name, p.dtype) for p in PARAMS)],
+    requires=[Port("corpus", "str"), *(Port(p.name, p.dtype) for p in PORTS)],
     provides=[
         Port("loss", "float", stream=True),
         Port("final_loss", "float"),
+        Port("n_params", "float"),
         Port("weights", "artifact"),
     ],
     # No `gpus` declaration: this is the shipped training command, so a machine
@@ -44,11 +45,14 @@ PARAMS = [
 )
 def fit(
     corpus: str,
+    dim: int,
+    n_layers: int,
+    n_heads: int,
+    context: int,
     steps: int,
     batch_size: int,
     seq_len: int,
     lr: float,
-    log_every: int,
 ) -> dict:
     """Train from scratch on `corpus` (a path; empty means the demo corpus)."""
     from flax import nnx
@@ -58,7 +62,8 @@ def fit(
     from wren.train import train
 
     text = pathlib.Path(corpus).read_text() if corpus else home_corpus()
-    model = Wren(Config(), rngs=nnx.Rngs(0))
+    cfg = Config(dim=dim, n_layers=n_layers, n_heads=n_heads, context=context)
+    model = Wren(cfg, rngs=nnx.Rngs(0))
     losses = train(
         model,
         text,
@@ -66,7 +71,6 @@ def fit(
         batch_size=batch_size,
         seq_len=seq_len,
         lr=lr,
-        log_every=log_every,
         on_log=lambda step, loss: fluksio.emit(loss=loss),
     )
 
@@ -74,6 +78,7 @@ def fit(
     save(model, path)
     return {
         "final_loss": losses[-1],
+        "n_params": model.n_params(),
         "weights": fluksio.save_artifact(path.read_bytes(), name="weights.npz"),
     }
 
@@ -84,6 +89,6 @@ FLOW = Flow(
     nodes=[fit],
     # The corpus travels as a path: it is half a megabyte of text, which is a
     # file for the worker to read, not a parameter to record on every run.
-    inputs=[Port("corpus", "str", initial=""), *PARAMS],
-    outputs=["final_loss"],
+    inputs=[Port("corpus", "str", initial=""), *PORTS],
+    outputs=["final_loss", "n_params"],
 )

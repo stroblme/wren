@@ -24,7 +24,7 @@ def test_overfits_tiny_corpus():
     cfg = Config(dim=64, n_layers=2, n_heads=2, context=64)
     model = Wren(cfg, rngs=nnx.Rngs(0))
     text = "the lights are on. " * 60
-    losses = train(model, text, steps=150, batch_size=8, seq_len=32, log_every=1000)
+    losses = train(model, text, steps=150, batch_size=8, seq_len=32)
     assert losses[-1] < losses[0] * 0.2, (
         f"loss barely moved: {losses[0]} -> {losses[-1]}"
     )
@@ -77,7 +77,7 @@ def test_generate_batch_stop_sequence():
 
     cfg = Config(dim=64, n_layers=2, n_heads=2, context=64)
     model = Wren(cfg, rngs=nnx.Rngs(0))
-    train(model, "ab\n\n" * 200, steps=60, batch_size=8, seq_len=16, log_every=1000)
+    train(model, "ab\n\n" * 200, steps=60, batch_size=8, seq_len=16)
     [out], _ = generate_batch(model, [tokenizer.encode("ab")], n_new=20, stop=(10, 10))
     assert tokenizer.decode(out).endswith("\n\n") and len(out) < 20
 
@@ -92,17 +92,12 @@ def test_generate_batch_confidence():
     assert outs == generate_batch(model, [tokenizer.encode("ab")], n_new=6)[0]
 
 
-def test_train_flags_match_the_flow_and_train_defaults():
-    """The three places a training parameter is spelled must agree."""
+def test_flow_takes_every_knob():
+    """The node is what has to be edited when a knob is added; nothing else."""
     import inspect
 
     from wren import flow
+    from wren.train import DEFAULTS
 
-    defaults = {
-        name: parameter.default
-        for name, parameter in inspect.signature(train).parameters.items()
-        if parameter.default is not inspect.Parameter.empty and name != "on_log"
-    }
-    assert list(cli.TRAIN_PARAMS) == list(defaults)
-    assert {port.name: port.initial for port in flow.PARAMS} == defaults
-    assert {port.name: type(port.initial) for port in flow.PARAMS} == cli.TRAIN_PARAMS
+    assert set(inspect.signature(flow.fit).parameters) == {"corpus", *DEFAULTS}
+    assert {port.name: port.initial for port in flow.PORTS} == DEFAULTS
