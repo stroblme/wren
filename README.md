@@ -61,6 +61,22 @@ Attention-only models are weak at knowledge stored in weights but strong at cont
 
 Diagram source: [doc/architecture.d2](doc/architecture.d2), rendered with `d2 doc/architecture.d2 doc/architecture.svg`.
 
+## Benchmark
+
+Reference point (2026-09-01) against [needle 2](https://cactuscompute.com/needle), the smallest published tool-calling model, on [google/mobile-actions](https://huggingface.co/datasets/google/mobile-actions): all 961 eval rows, ordered strict exact match (needle's protocol), greedy decoding. Wren rows are fluksio `s7_bottleneck` runs (corpus=mobile, 8000 steps, muon 3e-3, seed 0; runs `1788289190357-de0baeab` and `1788122526556-cb31a992`), trained on the 8,693-row train split plus ~2% synthetic negatives.
+
+| model | params | weights | peak RAM | CPU decode | exact match | arg F1 |
+|---|---|---|---|---|---|---|
+| Wren, dim 128 × 36 layers | 2.40M | 9.7 MB fp32 | 988 MB¹ | 8.9 B/s¹ | 34.8% | 44.3% |
+| Wren, dim 256 × 8 layers | 2.17M | 8.7 MB fp32 | 877 MB¹ | 25.3 B/s¹ | 30.6% | 40.1% |
+| needle 2 | 45M | 14 MB (2-bit) | 28 MB | 500+ tok/s² | 63.7% | — |
+
+¹ Single-stream greedy decode, prompt processing included, through the JAX CPU runtime on x86. RAM is dominated by that runtime, not the ~10 MB of weights: the memory/speed gap against needle is mostly engine (dependency-free C++, 2-bit quantization-aware weights), not model size. At matched parameter count, depth is the CPU latency axis — 8 layers decode ~3× faster than 36.
+
+² Raspberry Pi 5, from the needle 2 page.
+
+Protocol differences that favor needle: tool schemas in context with retrieval, grammar-constrained decoding, and a 115B-token pretraining corpus. Wren holds the 7-function surface in its weights (implicit-tool mode) and decodes freely after task-only training.
+
 ## Related Research
 
 - [A Controlled Study of Attention-Only Transformers](https://arxiv.org/abs/2607.18363)

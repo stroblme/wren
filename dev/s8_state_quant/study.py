@@ -1,0 +1,265 @@
+"""S8 — state-conditioned corpus × quantization-aware training.
+
+Two questions at once, on the generated home corpus (wren.dataset.home):
+
+1. Does state-in-context data finally force copying? Eval houses use
+   device ids never seen in training, so held-out exact match *is* the
+   copy probe (s7 measured 0/400 copying on every previous corpus).
+2. What does quantization-aware training cost at 2M params? Arms:
+   fp32 (control), int8, and ternary a la BitNet b1.58 (absmean weights
+   in {-1, 0, +1}, arXiv:2402.17764; QAT with straight-through gradients,
+   arXiv:2310.11453). Weights are fake-quantized in the forward pass;
+   fp32 masters keep training stable. Embedding and norms stay fp32
+   (BitNet's practice; they are ~3% of parameters here).
+
+`packed_mb` reports the theoretical shipped size at 2/8/32 bits per
+attention weight -- no packed runtime exists yet, by design (runtime
+work is deferred; DECISIONS.md).
+
+The training node declares `resources={"gpus": 1}`; the engine must know
+the card is there or it trains on the CPU. `.fluksio/env` carries
+`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
+
+    uv run fluksio sync dev/s8_state_quant
+    uv run fluksio sweep s8_state_quant --param quant=fp32,int8,ternary
+
+Self-check (quantizer values, straight-through gradient, arm parity):
+`uv run python dev/s8_state_quant/study.py`
+"""
+
+import itertools
+import pathlib
+import tempfile
+
+import fluksio
+import jax
+import jax.numpy as jnp
+from flax import nnx
+from fluksio import Flow, Port, node
+
+from wren import tokenizer
+from wren.eval import abstain_rate, score
+from wren.model import Config, Wren, generate_batch, save
+from wren.train import muon, sample_batch, train_step
+
+SEQ_LEN = 384  # a window spans a full sample (p95 ~380 B), state block included
+N_NEW = 96  # two call lines and the closing blank line
+
+
+def _ste(w: jax.Array, quant) -> jax.Array:
+    """Forward sees quant(w); the gradient passes straight through."""
+    return w + jax.lax.stop_gradient(quant(w) - w)
+
+
+def _int8(w: jax.Array) -> jax.Array:
+    scale = jnp.max(jnp.abs(w)) / 127 + 1e-12
+    return jnp.round(w / scale) * scale
+
+
+def _ternary(w: jax.Array) -> jax.Array:
+    """BitNet b1.58's absmean quantizer: {-1, 0, +1} times one scale."""
+    scale = jnp.mean(jnp.abs(w)) + 1e-12
+    return jnp.clip(jnp.round(w / scale), -1, 1) * scale
+
+
+class Int8Linear(nnx.Linear):
+    def __call__(self, inputs: jax.Array, out_sharding=None) -> jax.Array:
+        return inputs @ _ste(self.kernel.value, _int8)
+
+
+class TernaryLinear(nnx.Linear):
+    def __call__(self, inputs: jax.Array, out_sharding=None) -> jax.Array:
+        return inputs @ _ste(self.kernel.value, _ternary)
+
+
+QUANT = {"fp32": None, "int8": Int8Linear, "ternary": TernaryLinear}
+BITS = {"fp32": 32, "int8": 8, "ternary": 2}
+
+
+def quantize_(model: Wren, mode: str) -> Wren:
+    """Point every attention projection at the quantizing forward. The
+    parameters are untouched fp32 masters, so the fp32 arm stays
+    byte-identical to stock Wren (pinned by the self-check)."""
+    if (cls := QUANT[mode]) is not None:
+        for block in model.blocks:
+            block.wqkv.__class__ = cls
+            block.wo.__class__ = cls
+    return model
+
+
+def packed_mb(model: Wren, mode: str) -> float:
+    """Shipped megabytes with attention weights at the arm's bit width."""
+    quantized = sum(b.wqkv.kernel.size + b.wo.kernel.size for b in model.blocks)
+    rest = model.n_params() - quantized
+    return (quantized * BITS[mode] + rest * 32) / 8 / 1e6
+
+
+def own_lines(generated: str) -> str:
+    """The model's continuation up to its first empty line -- past that
+    it is hallucinating the next training sample, not answering."""
+    return "\n".join(itertools.takewhile(bool, generated.split("\n")))
+
+
+@node(
+    requires=[Port("n_train", "int")],
+    provides=[Port("train_text", "str"), Port("eval_samples", "json")],
+)
+def dataset(n_train: int) -> dict:
+    """n_train sets the number of *unique* samples: at the fixed token
+    budget it is the effective epoch count's inverse — the knob for the
+    repetition-suppresses-induction hypothesis (arXiv:2205.10487)."""
+    from wren.dataset import home, to_text
+
+    train, evals = home(n_train=n_train)
+    return {
+        "train_text": to_text(train),
+        "eval_samples": [[p, [[n, a] for n, a in calls]] for p, calls in evals],
+    }
+
+
+@node(
+    requires=[
+        Port("train_text", "str"),
+        Port("eval_samples", "json"),
+        Port("quant", "str"),
+        Port("lr", "float"),
+        Port("seed", "int"),
+        Port("steps", "int"),
+    ],
+    provides=[
+        Port("loss", "float", stream=True),
+        Port("final_loss", "float"),
+        Port("exact_match", "float"),
+        Port("well_formed", "float"),
+        Port("name_accuracy", "float"),
+        Port("arg_f1", "float"),
+        Port("abstain_acc", "float"),
+        Port("n_params", "float"),
+        Port("packed_mb", "float"),
+        Port("weights", "artifact"),
+    ],
+    # preallocate=false: jax otherwise takes 75% of the card at import, so a
+    # second engine (a `--local` run beside a running `serve`) collides with
+    # this one instead of fitting beside it.
+    resources={"gpus": 1, "env": {"XLA_PYTHON_CLIENT_PREALLOCATE": "false"}},
+)
+def study(
+    train_text: str,
+    eval_samples: list,
+    quant: str,
+    lr: float,
+    seed: int,
+    steps: int = 8000,
+    batch_size: int = 32,
+    gen_batch: int = 64,
+    log_every: int = 50,
+) -> dict:
+    import os
+
+    if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
+        raise RuntimeError("no card declared: `fluksio serve --gpus 1`")
+    if jax.default_backend() == "cpu":
+        raise RuntimeError("jax sees no card: `uv sync --group cuda12`, restart engine")
+
+    model = quantize_(Wren(Config(), rngs=nnx.Rngs(seed)), quant)
+    optimizer = nnx.Optimizer(model, muon(lr), wrt=nnx.Param)
+    data = jnp.array(tokenizer.encode(train_text), dtype=jnp.int32)
+    key = jax.random.PRNGKey(seed)
+    loss = float("nan")
+    for step in range(steps):
+        key, sub = jax.random.split(key)
+        x, y = sample_batch(data, batch_size, SEQ_LEN, sub)
+        loss = float(train_step(model, optimizer, x, y))
+        if step % log_every == 0 or step == steps - 1:
+            fluksio.emit(loss=loss)
+
+    samples = [(p, [(n, dict(a)) for n, a in calls]) for p, calls in eval_samples]
+    predictions = []
+    for i in range(0, len(samples), gen_batch):
+        prompts = [tokenizer.encode(p) for p, _ in samples[i : i + gen_batch]]
+        outs, _ = generate_batch(model, prompts, N_NEW, stop=(10, 10))
+        predictions += [own_lines(tokenizer.decode(o)) for o in outs]
+
+    # Positives carry the copy question (unseen ids); negatives the abstention.
+    positives = [i for i, (_, calls) in enumerate(samples) if calls]
+    negatives = [i for i, (_, calls) in enumerate(samples) if not calls]
+    metrics = score(
+        [predictions[i] for i in positives], [samples[i][1] for i in positives]
+    )
+
+    path = pathlib.Path(tempfile.mkdtemp()) / "weights.npz"
+    save(model, path)
+    return {
+        "final_loss": loss,
+        "abstain_acc": abstain_rate([predictions[i] for i in negatives]),
+        "n_params": float(model.n_params()),
+        "packed_mb": packed_mb(model, quant),
+        "weights": fluksio.save_artifact(path.read_bytes(), name="weights.npz"),
+    } | metrics
+
+
+Flow(
+    "s8_state_quant",
+    title="S8 — state corpus × quantization",
+    nodes=[dataset, study],
+    inputs=[
+        Port("quant", "str", initial="fp32"),
+        Port("lr", "float", initial=3e-3),
+        Port("seed", "int", initial=0),
+        Port("steps", "int", initial=8000),
+        Port("n_train", "int", initial=8000),
+    ],
+    outputs=[
+        "final_loss",
+        "exact_match",
+        "well_formed",
+        "name_accuracy",
+        "arg_f1",
+        "abstain_acc",
+        "n_params",
+        "packed_mb",
+    ],
+)
+
+
+if __name__ == "__main__":
+    # Quantizer values: ternary lands on {-s, 0, +s}, int8 on a 255-point grid.
+    _w = jax.random.normal(jax.random.PRNGKey(0), (64, 64))
+    _tq = _ternary(_w)
+    assert len(jnp.unique(_tq)) <= 3, jnp.unique(_tq)
+    assert jnp.allclose(jnp.unique(jnp.abs(_tq)), jnp.unique(jnp.abs(_tq))[0:2])
+    assert len(jnp.unique(_int8(_w))) <= 255
+
+    # Straight-through: the gradient equals the unquantized gradient.
+    _x = jax.random.normal(jax.random.PRNGKey(1), (4, 64))
+    _g = jax.grad(lambda w: jnp.sum(_x @ _ste(w, _ternary)))(_w)
+    _g_plain = jax.grad(lambda w: jnp.sum(_x @ w))(_w)
+    assert jnp.allclose(_g, _g_plain)
+
+    # Arm parity: fp32 mode leaves the stock forward byte-identical, and a
+    # quantized arm changes the forward without touching the parameters.
+    _cfg = Config(dim=64, n_layers=2, context=64)
+    _stock = Wren(_cfg, rngs=nnx.Rngs(0))
+    _q = quantize_(Wren(_cfg, rngs=nnx.Rngs(0)), "ternary")
+    _tok = jnp.zeros((1, 8), dtype=jnp.int32)
+    _ref = Wren(_cfg, rngs=nnx.Rngs(0))(_tok)
+    assert (quantize_(Wren(_cfg, rngs=nnx.Rngs(0)), "fp32")(_tok) == _ref).all()
+    assert not (_q(_tok) == _ref).all()
+    assert (_q.blocks[0].wqkv.kernel.value == _stock.blocks[0].wqkv.kernel.value).all()
+
+    # A ternary model trains: loss falls on a repetitive stream.
+    _opt = nnx.Optimizer(_q, muon(3e-3), wrt=nnx.Param)
+    _data = jnp.array(tokenizer.encode("ab\n" * 200), dtype=jnp.int32)
+    _first = _last = None
+    for _step in range(30):
+        _xb, _yb = sample_batch(_data, 8, 16, jax.random.PRNGKey(_step))
+        _last = float(train_step(_q, _opt, _xb, _yb))
+        _first = _last if _first is None else _first
+    assert _last < _first, (_first, _last)
+
+    # packed_mb at the default shape: ternary ships an order of magnitude
+    # smaller (the tiny self-check shape is embedding-dominated).
+    _full = Wren(Config(), rngs=nnx.Rngs(0))
+    assert packed_mb(_full, "fp32") / packed_mb(_full, "ternary") > 8
+
+    print("s8 self-checks ok")
