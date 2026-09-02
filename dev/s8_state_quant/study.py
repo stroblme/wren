@@ -29,6 +29,7 @@ Self-check (quantizer values, straight-through gradient, arm parity):
 
 import itertools
 import pathlib
+import re
 import tempfile
 
 import fluksio
@@ -38,12 +39,21 @@ from flax import nnx
 from fluksio import Flow, Port, node
 
 from wren import tokenizer
-from wren.eval import abstain_rate, score
+from wren.eval import abstain_rate, parse_calls, score
 from wren.model import Config, Wren, generate_batch, save
 from wren.train import muon, sample_batch, train_step
 
-SEQ_LEN = 384  # a window spans a full sample (p95 ~380 B), state block included
-N_NEW = 96  # two call lines and the closing blank line
+# Per-corpus protocol: home windows span a full sample (p95 ~380 B, state
+# block included); mobile keeps s2's sizing so its numbers stay comparable.
+PROTOCOL = {
+    "home": {"context": 512, "seq_len": 384, "n_new": 96},
+    "mobile": {"context": 768, "seq_len": 512, "n_new": 192},
+}
+
+# A generated device id: kind letter + 4 chars of the id alphabet. Matches
+# no slug, state word, temperature or delay value (test_dataset pins the
+# alphabet), so it separates copy-requiring references from the rest.
+_ID = re.compile(r"^[lmhsw][a-z2-9]{4}$")
 
 
 def _ste(w: jax.Array, quant) -> jax.Array:
@@ -101,16 +111,28 @@ def own_lines(generated: str) -> str:
 
 
 @node(
-    requires=[Port("n_train", "int")],
+    requires=[Port("corpus", "str"), Port("n_train", "int")],
     provides=[Port("train_text", "str"), Port("eval_samples", "json")],
 )
-def dataset(n_train: int) -> dict:
-    """n_train sets the number of *unique* samples: at the fixed token
-    budget it is the effective epoch count's inverse — the knob for the
-    repetition-suppresses-induction hypothesis (arXiv:2205.10487)."""
-    from wren.dataset import home, to_text
+def dataset(corpus: str, n_train: int) -> dict:
+    """corpus 'home': the generated state corpus, where n_train sets the
+    number of *unique* samples — at the fixed token budget it is the
+    effective epoch count's inverse, the knob for the repetition-
+    suppresses-induction hypothesis (arXiv:2205.10487). corpus 'mobile':
+    the s2 stream (mobile-actions + ~2% synthetic negatives, needle's
+    benchmark; n_train is ignored — the split is the dataset's own)."""
+    import random
 
-    train, evals = home(n_train=n_train)
+    from wren.dataset import home, irrelevant, mobile_actions, to_text
+
+    if corpus == "mobile":
+        train, evals = mobile_actions()
+        neg_train, neg_eval = irrelevant()
+        mixed = train + neg_train
+        random.Random(0).shuffle(mixed)
+        train, evals = mixed, evals + neg_eval
+    else:
+        train, evals = home(n_train=n_train)
     return {
         "train_text": to_text(train),
         "eval_samples": [[p, [[n, a] for n, a in calls]] for p, calls in evals],
@@ -121,6 +143,7 @@ def dataset(n_train: int) -> dict:
     requires=[
         Port("train_text", "str"),
         Port("eval_samples", "json"),
+        Port("corpus", "str"),
         Port("quant", "str"),
         Port("lr", "float"),
         Port("seed", "int"),
@@ -134,6 +157,9 @@ def dataset(n_train: int) -> dict:
         Port("name_accuracy", "float"),
         Port("arg_f1", "float"),
         Port("abstain_acc", "float"),
+        Port("copy_exact", "float"),
+        Port("nocopy_exact", "float"),
+        Port("id_copy_acc", "float"),
         Port("n_params", "float"),
         Port("packed_mb", "float"),
         Port("weights", "artifact"),
@@ -146,6 +172,7 @@ def dataset(n_train: int) -> dict:
 def study(
     train_text: str,
     eval_samples: list,
+    corpus: str,
     quant: str,
     lr: float,
     seed: int,
@@ -161,14 +188,15 @@ def study(
     if jax.default_backend() == "cpu":
         raise RuntimeError("jax sees no card: `uv sync --group cuda12`, restart engine")
 
-    model = quantize_(Wren(Config(), rngs=nnx.Rngs(seed)), quant)
+    proto = PROTOCOL[corpus]
+    model = quantize_(Wren(Config(context=proto["context"]), rngs=nnx.Rngs(seed)), quant)
     optimizer = nnx.Optimizer(model, muon(lr), wrt=nnx.Param)
     data = jnp.array(tokenizer.encode(train_text), dtype=jnp.int32)
     key = jax.random.PRNGKey(seed)
     loss = float("nan")
     for step in range(steps):
         key, sub = jax.random.split(key)
-        x, y = sample_batch(data, batch_size, SEQ_LEN, sub)
+        x, y = sample_batch(data, batch_size, proto["seq_len"], sub)
         loss = float(train_step(model, optimizer, x, y))
         if step % log_every == 0 or step == steps - 1:
             fluksio.emit(loss=loss)
@@ -177,7 +205,7 @@ def study(
     predictions = []
     for i in range(0, len(samples), gen_batch):
         prompts = [tokenizer.encode(p) for p, _ in samples[i : i + gen_batch]]
-        outs, _ = generate_batch(model, prompts, N_NEW, stop=(10, 10))
+        outs, _ = generate_batch(model, prompts, proto["n_new"], stop=(10, 10))
         predictions += [own_lines(tokenizer.decode(o)) for o in outs]
 
     # Positives carry the copy question (unseen ids); negatives the abstention.
@@ -187,10 +215,37 @@ def study(
         [predictions[i] for i in positives], [samples[i][1] for i in positives]
     )
 
+    # The copy split: exact match over samples whose reference needs an
+    # unseen device id vs the rest, and per-value id reproduction. -1 when
+    # a class is empty (the mobile corpus has no generated ids).
+    parsed = {i: parse_calls(predictions[i]) or [] for i in positives}
+    needs = {
+        i: any(_ID.match(str(v)) for _, a in samples[i][1] for v in a.values())
+        for i in positives
+    }
+    copy_idx = [i for i in positives if needs[i]]
+    nocopy_idx = [i for i in positives if not needs[i]]
+    id_hit = id_total = 0
+    for i in copy_idx:
+        values = {
+            (ci, k): v for ci, (_, a) in enumerate(parsed[i]) for k, v in a.items()
+        }
+        for ci, (_, a) in enumerate(samples[i][1]):
+            for k, v in a.items():
+                if _ID.match(str(v)):
+                    id_total += 1
+                    id_hit += values.get((ci, k)) == v
+
+    def exact_over(idx: list[int]) -> float:
+        return sum(parsed[i] == samples[i][1] for i in idx) / len(idx) if idx else -1.0
+
     path = pathlib.Path(tempfile.mkdtemp()) / "weights.npz"
     save(model, path)
     return {
         "final_loss": loss,
+        "copy_exact": exact_over(copy_idx),
+        "nocopy_exact": exact_over(nocopy_idx),
+        "id_copy_acc": id_hit / id_total if id_total else -1.0,
         "abstain_acc": abstain_rate([predictions[i] for i in negatives]),
         "n_params": float(model.n_params()),
         "packed_mb": packed_mb(model, quant),
@@ -203,6 +258,7 @@ Flow(
     title="S8 — state corpus × quantization",
     nodes=[dataset, study],
     inputs=[
+        Port("corpus", "str", initial="home"),
         Port("quant", "str", initial="fp32"),
         Port("lr", "float", initial=3e-3),
         Port("seed", "int", initial=0),
@@ -216,6 +272,9 @@ Flow(
         "name_accuracy",
         "arg_f1",
         "abstain_acc",
+        "copy_exact",
+        "nocopy_exact",
+        "id_copy_acc",
         "n_params",
         "packed_mb",
     ],

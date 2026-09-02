@@ -69,11 +69,14 @@ Reference point (2026-09-01) against [needle 2](https://cactuscompute.com/needle
 |---|---|---|---|---|---|---|
 | Wren, dim 128 × 36 layers | 2.40M | 9.7 MB fp32 | 988 MB¹ | 8.9 B/s¹ | 34.8% | 44.3% |
 | Wren, dim 256 × 8 layers | 2.17M | 8.7 MB fp32 | 877 MB¹ | 25.3 B/s¹ | 30.6% | 40.1% |
+| Wren, dim 256 × 8, ternary QAT | 2.17M | 0.80 MB packed³ | —³ | —³ | 34.8% | 45.1% |
 | needle 2 | 45M | 14 MB (2-bit) | 28 MB | 500+ tok/s² | 63.7% | — |
 
 ¹ Single-stream greedy decode, prompt processing included, through the JAX CPU runtime on x86. RAM is dominated by that runtime, not the ~10 MB of weights: the memory/speed gap against needle is mostly engine (dependency-free C++, 2-bit quantization-aware weights), not model size. At matched parameter count, depth is the CPU latency axis — 8 layers decode ~3× faster than 36.
 
 ² Raspberry Pi 5, from the needle 2 page.
+
+³ BitNet-style quantization-aware training (`dev/s8_state_quant`, run `1788349172553-e26a05ad`): attention weights at 2 bits, embedding/norms fp32 — the theoretical shipped size; no packed runtime exists yet, so RAM and speed are not measured. Task metrics match or beat the fp32 arm at the same shape and budget.
 
 Protocol differences that favor needle: tool schemas in context with retrieval, grammar-constrained decoding, and a 115B-token pretraining corpus. Wren holds the 7-function surface in its weights (implicit-tool mode) and decodes freely after task-only training.
 
