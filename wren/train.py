@@ -68,10 +68,10 @@ def train_step(
 def train(
     model: Wren,
     text: str,
-    steps: int = 2000,
-    batch_size: int = 256,
-    seq_len: int = 128,
-    lr: float = 1e-3,
+    steps: int = 4000,
+    batch_size: int = 32,
+    seq_len: int = 384,
+    lr: float = 3e-3,
     on_log: Callable[[int, float], None] | None = None,
 ) -> list[float]:
     """Train in place on a text corpus; returns the loss at every step.
