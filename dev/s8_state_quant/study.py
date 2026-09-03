@@ -43,10 +43,10 @@ from wren.eval import abstain_rate, parse_calls, score
 from wren.model import Config, Wren, generate_batch, save
 from wren.train import muon, sample_batch, train_step
 
-# Per-corpus protocol: home windows span a full sample (p95 ~380 B, state
-# block included); mobile keeps s2's sizing so its numbers stay comparable.
+# Per-corpus protocol: home windows span a full sample (pruned state block
+# included); mobile keeps s2's sizing so its numbers stay comparable.
 PROTOCOL = {
-    "home": {"context": 512, "seq_len": 384, "n_new": 96},
+    "home": {"context": 384, "seq_len": 384, "n_new": 96},
     "mobile": {"context": 768, "seq_len": 512, "n_new": 192},
 }
 
