@@ -324,14 +324,28 @@ def _house(rng: random.Random, avoid: set[str]) -> dict:
     }
 
 
-def _render_state(house: dict) -> str:
+def _render_state(house: dict, keep: list[str]) -> str:
+    """The state block, pruned to `keep` — the retrieval step the deployed
+    pipeline performs: only the areas relevant to the request (plus the
+    distractors the retriever would let through) reach the context."""
     lines = [
         f"{house['time']} out {house['out']}C {'dark' if house['dark'] else 'bright'}",
         f"user {house['user']}",
     ]
     for area, devs in house["areas"].items():
-        lines.append(f"{area}: " + ", ".join(f"{k} {i} {s}" for k, (i, s) in devs.items()))
+        if area in keep:
+            lines.append(
+                f"{area}: " + ", ".join(f"{k} {i} {s}" for k, (i, s) in devs.items())
+            )
     return "\n".join(lines) + "\n"
+
+
+def _keep(house: dict, rng: random.Random, *needed: str) -> list[str]:
+    """The needed areas plus one or two distractors, in house order, so
+    the model still has to find the right line."""
+    others = [a for a in house["areas"] if a not in needed]
+    extra = set(rng.sample(others, min(len(others), rng.randint(1, 2))))
+    return [a for a in house["areas"] if a in {*needed} | extra]
 
 
 def _command(house: dict, rng: random.Random) -> Sample:
@@ -341,9 +355,10 @@ def _command(house: dict, rng: random.Random) -> Sample:
     if rng.random() < 0.15:  # area-less
         if house["user"] == "away":
             house["user"] = rng.choice(list(house["areas"]))
+        area = house["user"]
         action = rng.choice(["on", "off"])
         prompt = rng.choice(AREALESS_ON if action == "on" else AREALESS_OFF)
-        calls = [(f"lights.{action}", {"id": house["areas"][house["user"]]["light"][0]})]
+        calls = [(f"lights.{action}", {"id": house["areas"][area]["light"][0]})]
     else:
         area = rng.choice(list(house["areas"]))
         kind = rng.choice(list(house["areas"][area]))
@@ -361,13 +376,13 @@ def _command(house: dict, rng: random.Random) -> Sample:
         m = rng.choice(_DELAYS)
         prompt += f" in {m}m"
         calls = [(n, a | {"delay": f"{m}m"}) for n, a in calls]
-    return _render_state(house) + prompt + "\n", calls
+    return _render_state(house, _keep(house, rng, area)) + prompt + "\n", calls
 
 
 def _reading(house: dict, rng: random.Random) -> Sample:
     area = rng.choice(list(house["areas"]))
     prompt = rng.choice(TEMPERATURE).format(area=area)
-    return _render_state(house) + prompt + "\n", [
+    return _render_state(house, _keep(house, rng, area)) + prompt + "\n", [
         ("sensors.temperature", {"area": _slug(area)})
     ]
 
@@ -385,21 +400,24 @@ def _coming_home(house: dict, rng: random.Random) -> Sample:
         calls.append(("heating.boost", {"id": living["heat"][0]}))
     if house["dark"] and living["light"][1] == "off":
         calls.append(("lights.on", {"delay": f"{m}m", "id": living["light"][0]}))
-    return _render_state(house) + prompt + "\n", calls
+    return _render_state(house, _keep(house, rng, "living room")) + prompt + "\n", calls
 
 
 def _scene(house: dict, rng: random.Random) -> Sample:
     living = house["areas"]["living room"]
-    return _render_state(house) + rng.choice(DINNER) + "\n", [
+    return _render_state(house, _keep(house, rng, "living room")) + rng.choice(
+        DINNER
+    ) + "\n", [
         ("lights.on", {"id": living["light"][0]}),
         ("media.play", {"id": living["media"][0]}),
     ]
 
 
 def _chatter(house: dict, rng: random.Random) -> Sample:
-    """Off-domain talk with a full state block: abstain."""
+    """Off-domain talk with a state block: abstain."""
     template, slots = rng.choice(list(_IRRELEVANT.items()))
-    return _render_state(house) + template.format(rng.choice(slots)) + "\n", []
+    prompt = template.format(rng.choice(slots))
+    return _render_state(house, _keep(house, rng)) + prompt + "\n", []
 
 
 def _missing(house: dict, rng: random.Random) -> Sample:
@@ -414,7 +432,8 @@ def _missing(house: dict, rng: random.Random) -> Sample:
     )
     action = rng.choice([a for k, a in _ACTIONS if k == kind])
     phrasings, _ = _ACTIONS[(kind, action)]
-    return _render_state(house) + rng.choice(phrasings).format(area=area) + "\n", []
+    prompt = rng.choice(phrasings).format(area=area)
+    return _render_state(house, _keep(house, rng, area)) + prompt + "\n", []
 
 
 def _stateless(house: dict, rng: random.Random) -> Sample:

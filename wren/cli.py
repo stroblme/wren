@@ -55,6 +55,14 @@ def main() -> None:
         parser.error("empty prompt")
     if not WEIGHTS.exists():
         parser.error(f"no weights at {WEIGHTS}; run `wren --train` first")
+    # Persist compiled programs across invocations: the generation loop
+    # otherwise recompiles on every CLI start, dwarfing the generation.
+    import jax
+
+    jax.config.update(
+        "jax_compilation_cache_dir",
+        str(pathlib.Path.home() / ".cache" / "wren" / "jax"),
+    )
     model = load(WEIGHTS)
     # Only the tail of an over-long prompt fits the context window.
     tokens = tokenizer.encode(prompt)[-model.cfg.context :]

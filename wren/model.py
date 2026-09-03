@@ -30,7 +30,7 @@ class Config:
     dim: int = 256  # width of the residual stream
     n_layers: int = 8  # depth: the CPU latency axis -- keep shallow (README)
     n_heads: int = 4
-    context: int = 512  # maximum sequence length; holds a state block + calls
+    context: int = 384  # maximum sequence length; holds a pruned state block + calls
 
 
 def rope(x: jax.Array, offset: jax.Array | int = 0) -> jax.Array:
@@ -88,6 +88,31 @@ class AttentionBlock(nnx.Module):
 
         out = jnp.einsum("bhqk,bkhd->bqhd", attn, v).reshape(batch, seq, dim)
         return x + self.wo(out)
+
+    def prefill(
+        self, x: jax.Array, k_cache: jax.Array, v_cache: jax.Array
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        """__call__ plus cache filling: the same attention over the whole
+        prompt in one pass, with the roped keys/values written to slots
+        0..seq-1 — the batched equivalent of `decode` over those positions."""
+        batch, seq, dim = x.shape
+        h = self.norm(x)
+        q, k, v = jnp.split(self.wqkv(h), 3, axis=-1)
+        q = q.reshape(batch, seq, self.n_heads, self.head_dim)
+        k = k.reshape(batch, seq, self.n_heads, self.head_dim)
+        v = v.reshape(batch, seq, self.n_heads, self.head_dim)
+        q = rope(self.q_norm(q))
+        k = rope(self.k_norm(k))
+
+        scores = jnp.einsum("bqhd,bkhd->bhqk", q, k) / jnp.sqrt(self.head_dim)
+        causal = jnp.tril(jnp.ones((seq, seq), dtype=bool))
+        scores = jnp.where(causal, scores, -jnp.inf)
+        attn = jax.nn.softmax(scores, axis=-1)
+
+        out = jnp.einsum("bhqk,bkhd->bqhd", attn, v).reshape(batch, seq, dim)
+        k_cache = jax.lax.dynamic_update_slice_in_dim(k_cache, k, 0, axis=1)
+        v_cache = jax.lax.dynamic_update_slice_in_dim(v_cache, v, 0, axis=1)
+        return x + self.wo(out), k_cache, v_cache
 
     def decode(
         self, x: jax.Array, k_cache: jax.Array, v_cache: jax.Array, pos: jax.Array
@@ -165,10 +190,17 @@ class Wren(nnx.Module):
             updated.append((k, v))
         return self.embed.attend(self.norm(x))[:, 0], updated
 
-
-@nnx.jit
-def _forward(model: Wren, tokens: jax.Array) -> jax.Array:
-    return model(tokens)
+    def prefill(
+        self, tokens: jax.Array, caches: list[tuple[jax.Array, jax.Array]]
+    ) -> list[tuple[jax.Array, jax.Array]]:
+        """Fill the caches for (batch, seq) prompt tokens in one batched
+        pass instead of seq sequential `decode` steps."""
+        x = self.embed(tokens)
+        updated = []
+        for block, (k, v) in zip(self.blocks, caches):
+            x, k, v = block.prefill(x, k, v)
+            updated.append((k, v))
+        return updated
 
 
 def generate(
@@ -178,37 +210,14 @@ def generate(
     temperature: float = 1.0,
     seed: int = 0,
 ) -> list[int]:
-    """Sample n_new bytes autoregressively after the prompt.
-
-    The token buffer has fixed shape (1, context) so jax compiles the
-    forward pass exactly once; the causal mask makes the zero-padding after
-    position `pos` invisible. When the window fills we slide it left --
-    RoPE only encodes relative distance, so sliding is safe.
-
-    ponytail: recomputes the full window every step; fine for the CLI's
-    single prompt. Bulk evaluation uses generate_batch, which decodes
-    through the KV cache instead.
-    """
-    cfg = model.cfg
-    assert 0 < len(prompt) <= cfg.context
-    key = jax.random.PRNGKey(seed)
-    buf = jnp.zeros((1, cfg.context), dtype=jnp.int32)
-    buf = buf.at[0, : len(prompt)].set(jnp.array(prompt, dtype=jnp.int32))
-    pos = len(prompt)
-    out = list(prompt)
-    for _ in range(n_new):
-        logits = _forward(model, buf)[0, pos - 1] / max(temperature, 1e-6)
-        key, sub = jax.random.split(key)
-        nxt = int(jax.random.categorical(sub, logits))
-        out.append(nxt)
-        if pos < cfg.context:
-            buf = buf.at[0, pos].set(nxt)
-            pos += 1
-        else:
-            buf = jnp.concatenate(
-                [buf[:, 1:], jnp.array([[nxt]], dtype=jnp.int32)], axis=1
-            )
-    return out
+    """Sample n_new bytes autoregressively after the prompt, through the
+    same prefill + compiled-loop path as generate_batch. A prompt longer
+    than context - n_new loses its head."""
+    assert prompt, "empty prompt"
+    outs, _ = generate_batch(
+        model, [prompt], n_new, temperature=temperature, seed=seed
+    )
+    return list(prompt) + outs[0]
 
 
 @nnx.jit
@@ -221,19 +230,91 @@ def _decode_step(
     return model.decode(tokens, caches, pos)
 
 
+@nnx.jit
+def _prefill(
+    model: Wren, tokens: jax.Array, caches: list[tuple[jax.Array, jax.Array]]
+) -> list[tuple[jax.Array, jax.Array]]:
+    return model.prefill(tokens, caches)
+
+
+@nnx.jit
+def _decode_loop(
+    model: Wren,
+    buf: jax.Array,
+    caches: list[tuple[jax.Array, jax.Array]],
+    lens: jax.Array,
+    ends: jax.Array,
+    start: jax.Array,
+    stop_arr: jax.Array,
+    temperature: jax.Array,
+    key: jax.Array,
+) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """The whole generation loop as one compiled program: no per-byte
+    dispatch, caches never leave the device. Temperature 0 decodes
+    greedily; above 0 it samples. Returns the filled buffer, per-row end
+    positions, summed log-probabilities and written byte counts."""
+    batch, width = buf.shape
+    s = stop_arr.shape[0]
+
+    def cond(carry):
+        t, _buf, _caches, done, ends, _logprob, _written, _ring = carry
+        return (t < width - 1) & jnp.any(~done & (t + 1 < ends))
+
+    def body(carry):
+        t, buf, caches, done, ends, logprob, written, ring = carry
+        tokens = jax.lax.dynamic_slice_in_dim(buf, t, 1, axis=1)
+        logits, caches = model.decode(tokens, caches, t)
+        sampled = jax.random.categorical(
+            jax.random.fold_in(key, t), logits / jnp.maximum(temperature, 1e-6)
+        )
+        greedy = jnp.argmax(logits, axis=-1)
+        nxt = jnp.where(temperature > 0, sampled, greedy).astype(jnp.int32)
+        write = ~done & (t + 1 < ends) & (t + 1 >= lens)
+        cur = jax.lax.dynamic_slice_in_dim(buf, t + 1, 1, axis=1)[:, 0]
+        new = jnp.where(write, nxt, cur)
+        buf = jax.lax.dynamic_update_slice_in_dim(buf, new[:, None], t + 1, axis=1)
+        picked = jnp.take_along_axis(jax.nn.log_softmax(logits), nxt[:, None], 1)[:, 0]
+        logprob += jnp.where(write, picked, 0.0)
+        written += write
+        if s:  # static: traced once per stop length
+            ring = jnp.concatenate([ring[:, 1:], new[:, None]], axis=1)
+            # Only a window of purely generated bytes may match the stop.
+            matched = write & (written >= s) & jnp.all(ring == stop_arr, axis=1)
+            done |= matched
+            ends = jnp.where(matched, t + 2, ends)
+        return t + 1, buf, caches, done, ends, logprob, written, ring
+
+    carry = (
+        start,
+        buf,
+        caches,
+        jnp.zeros(batch, dtype=bool),
+        ends,
+        jnp.zeros(batch),
+        jnp.zeros(batch, dtype=jnp.int32),
+        jnp.zeros((batch, max(s, 1)), dtype=jnp.int32),
+    )
+    _, buf, _, _, ends, logprob, written, _ = jax.lax.while_loop(cond, body, carry)
+    return buf, ends, logprob, written
+
+
 def generate_batch(
     model: Wren,
     prompts: list[list[int]],
     n_new: int,
     stop: tuple[int, ...] = (),
+    temperature: float = 0.0,
+    seed: int = 0,
 ) -> tuple[list[list[int]], list[float]]:
-    """Greedy-decode continuations for many prompts in one pass.
+    """Decode continuations for many prompts in one pass — greedily by
+    default, sampled when temperature is above 0.
 
-    One KV-cached decode loop serves the whole batch: prompt tokens are fed
-    in teacher-forced (their logits discarded), then each sample continues
-    with its own argmax tokens, so ragged prompt lengths need no separate
-    prefill pass. Prompts longer than context - n_new lose their head.
-    Returns the generated tokens per prompt, cut after `stop` appears.
+    The prompts are prefilled in one batched forward (garbage cache slots
+    past a short row's prompt are rewritten by the loop before they are
+    ever attended), then a single compiled loop decodes from the first
+    position any row generates at. Prompts longer than context - n_new
+    lose their head. Returns the generated tokens per prompt, cut after
+    `stop` appears.
 
     Also returns each sample's per-byte confidence: the geometric mean of
     the probabilities of its generated bytes -- the raw material for
@@ -241,39 +322,31 @@ def generate_batch(
     """
     cfg = model.cfg
     prompts = [p[-(cfg.context - n_new) :] for p in prompts]
-    batch, stop_arr = len(prompts), np.array(stop, dtype=np.int32)
+    batch = len(prompts)
     lens = np.array([len(p) for p in prompts])
-    width = lens.max() + n_new
+    # Rounding the width up bounds recompilation to a handful of shapes.
+    width = min(-(-(int(lens.max()) + n_new) // 64) * 64, cfg.context)
     buf = np.zeros((batch, width), dtype=np.int32)
     for i, p in enumerate(prompts):
         buf[i, : len(p)] = p
     caches = model.init_cache(batch)
-    ends = lens + n_new
-    done = np.zeros(batch, dtype=bool)
-    logprob = np.zeros(batch)
-    written = np.zeros(batch, dtype=np.int64)
-    for t in range(width - 1):
-        active = ~done & (t + 1 < ends)
-        if not active.any():
-            break
-        logits, caches = _decode_step(
-            model, jnp.asarray(buf[:, t : t + 1]), caches, jnp.int32(t)
-        )
-        nxt = np.asarray(jnp.argmax(logits, axis=-1), dtype=np.int32)
-        write = active & (t + 1 >= lens)
-        buf[write, t + 1] = nxt[write]
-        if write.any():
-            probs = np.asarray(jax.nn.log_softmax(logits, axis=-1))
-            logprob[write] += probs[write, nxt[write]]
-            written[write] += 1
-        for i in np.nonzero(write)[0] if stop else ():
-            if (
-                t + 2 - lens[i] >= len(stop_arr)
-                and (buf[i, t + 2 - len(stop_arr) : t + 2] == stop_arr).all()
-            ):
-                done[i], ends[i] = True, t + 2
+    if width > 2:  # one batched pass instead of width sequential steps
+        caches = _prefill(model, jnp.asarray(buf[:, : width - 1]), caches)
+    buf, ends, logprob, written = _decode_loop(
+        model,
+        jnp.asarray(buf),
+        caches,
+        jnp.asarray(lens, dtype=jnp.int32),
+        jnp.asarray(lens + n_new, dtype=jnp.int32),
+        jnp.int32(max(int(lens.min()) - 1, 0)),
+        jnp.array(stop, dtype=jnp.int32),
+        jnp.float32(temperature),
+        jax.random.PRNGKey(seed),
+    )
+    buf, ends = np.asarray(buf), np.asarray(ends)
     outs = [buf[i, lens[i] : ends[i]].tolist() for i in range(batch)]
-    return outs, list(np.exp(logprob / np.maximum(written, 1)))
+    conf = np.exp(np.asarray(logprob) / np.maximum(np.asarray(written), 1))
+    return outs, [float(c) for c in conf]
 
 
 WEIGHTS = pathlib.Path(__file__).parent / "weights.npz"
