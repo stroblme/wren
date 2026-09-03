@@ -53,3 +53,10 @@ def test_mixture_covers_the_sample_kinds():
     assert any(not calls for _, calls in train)  # abstentions
     assert any(len(calls) > 1 for _, calls in train)  # scenes/implications
     assert any("user " not in prompt for prompt, _ in train)  # stateless
+
+
+def test_prompts_fit_the_generation_budget():
+    """Pruned state blocks keep every prompt inside context - n_new, so
+    eval never trims a prompt's head (s8 protocol: 384 - 96)."""
+    train, evals = home(300, 60)
+    assert max(len(p.encode()) for p, _ in train + evals) <= 288
