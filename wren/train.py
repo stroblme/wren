@@ -1,10 +1,4 @@
-"""Next-byte-prediction training.
-
-The entire training objective is: given a window of bytes, predict the byte
-that follows each position. Everything Wren will later do (tool calls,
-readings, learned behaviors) is built on this one objective -- the data,
-not the loss function, is what changes per capability.
-"""
+"""Train byte decoders to predict the next byte at each position."""
 
 import inspect
 from collections.abc import Callable
@@ -20,9 +14,7 @@ from wren.model import Config, Wren
 
 
 def muon(lr: float) -> optax.GradientTransformation:
-    """Wren's default optimizer since the s3 bake-off (dev/s3_optimizers): Muon
-    preconditions the attention matrices; the tied embedding (also 2D) and
-    the norm scales fall through to its inner AdamW, standard practice."""
+    """Apply Muon to attention matrices and its inner AdamW to embeddings and norms."""
 
     def hidden_matrices(params: dict) -> dict:
         return jax.tree_util.tree_map_with_path(
@@ -44,8 +36,7 @@ def muon(lr: float) -> optax.GradientTransformation:
 def sample_batch(
     data: jax.Array, batch_size: int, seq_len: int, key: jax.Array
 ) -> tuple[jax.Array, jax.Array]:
-    """Cut batch_size random windows out of the corpus. Targets are the
-    inputs shifted one byte left: position i must predict byte i+1."""
+    """Sample corpus windows with targets shifted forward by one byte."""
     starts = jax.random.randint(key, (batch_size,), 0, len(data) - seq_len - 1)
     idx = starts[:, None] + jnp.arange(seq_len + 1)[None, :]
     chunk = data[idx]
@@ -74,10 +65,9 @@ def train(
     lr: float = 3e-3,
     on_log: Callable[[int, float], None] | None = None,
 ) -> list[float]:
-    """Train in place on a text corpus; returns the loss at every step.
+    """Train the model in place and return the loss at each step.
 
-    `on_log` sees every logged step, which is how the fluksio node streams
-    the curve without duplicating this loop (wren/flow.py).
+    Call `on_log(step, loss)` after every step if provided.
     """
     data = jnp.array(tokenizer.encode(text), dtype=jnp.int32)
     optimizer = nnx.Optimizer(model, muon(lr), wrt=nnx.Param)

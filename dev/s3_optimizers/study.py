@@ -1,36 +1,8 @@
-"""S3 — optimizer bake-off: AdamW vs Muon vs K-FAC.
+"""Compare AdamW, Muon, and K-FAC at a fixed training budget.
 
-Fixed step budget, matched tuning effort: one LR sweep per optimizer (the
-grids differ because their step scales differ), then >=3 seeds at each
-winner, then depth 16 at the winners for the depth question.
-
-The training node declares `resources={"gpus": 1}`, which is what serializes
-the arms: concurrent jax workers each preallocate ~75% of VRAM and kill each
-other's cublas init. The engine must know the card is there, or the
-declaration is clamped to zero and the worker is handed
-CUDA_VISIBLE_DEVICES="" -- training then runs on the CPU. `.fluksio/env`
-carries `FLOW_GPUS=1` for this checkout; elsewhere start it with
-`fluksio serve --gpus 1`.
-
-    uv run fluksio sweep s3_optimizers --param optimizer=adamw --param lr=3e-4,1e-3,3e-3,1e-2 --param seed=0
-    uv run fluksio sweep s3_optimizers --param optimizer=muon --param lr=3e-3,1e-2,3e-2,1e-1 --param seed=0
-    uv run fluksio sweep s3_optimizers --param optimizer=kfac --param lr=3e-4,1e-3,3e-3,1e-2 --param seed=0
-    uv run fluksio sweep s3_optimizers --param optimizer=... --param lr=<winner> --param seed=1,2
-    uv run fluksio sweep s3_optimizers --param optimizer=... --param lr=<winner> --param seed=0 --param depth=16
-
-All three precondition the same matrices, which is what makes the comparison
-clean: Muon orthogonalizes the attention-weight updates and leaves the tied
-embedding to its inner AdamW (standard practice); K-FAC's auto-registration
-puts Kronecker factors on exactly those attention matrices and diagonal
-approximations on the embedding and the norm scales; AdamW is the
-diagonal-only (empirical Fisher) baseline. K-FAC runs with fixed momentum
-0.9 and fixed damping 1e-3; its LR sweep is the matched tuning knob.
-
-Data: Home-Assistant-Requests train split (pristine, no synthetic
-negatives — abstention is out of scope here), benchmark metrics on its
-test split. Primary metric: loss at the fixed step budget; bits-per-byte
-and the needle-protocol metrics on the test split are the secondary check
-that a loss win is real.
+Use Home-Assistant-Requests for training and evaluation. The flow requests
+one GPU; start the engine with `uv run fluksio serve --gpus 1`. See
+README.md for optimizer settings, sweep grids, and reproduction commands.
 """
 
 import itertools
@@ -226,8 +198,7 @@ def bakeoff(
     bpb = sum(nats) / len(nats) / math.log(2)
 
     def own_lines(generated: str) -> str:
-        """The model's continuation up to its first empty line -- past that
-        it is hallucinating the next training sample, not answering."""
+        """Keep the generated continuation through its first blank line."""
         return "\n".join(itertools.takewhile(bool, generated.split("\n")))
 
     predictions = []

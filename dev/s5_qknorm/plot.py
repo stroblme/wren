@@ -1,15 +1,7 @@
-"""S5 deliverable figure: gradient variance, entropy, and the band story.
+"""Plot gradient moments, attention entropy, and frequency-pair statistics.
 
-Reads the engine's run table and writes figures/s5-qknorm.svg. Panel 1: the
-barren-plateau-style curve, per-parameter gradient second moment at init vs
-depth, with a 1/depth guide. Panel 2: the same quantity resolved per layer.
-Panel 3: normalized attention entropy per layer, at init and after training.
-Panel 4: the band instruments at the production depth — per-slot logit power
-share and gradient SNR, with the seq-128 aliasing wall marked.
-
-Data comes from `fluksio export runs`, which carries the probes blob as a
-`metric.probes` column and records each run's resolved inputs. `--local`
-boots the engine in this process, so plotting needs no server.
+Read Fluksio runs and write `figures/s5-qknorm.svg`. Export with `--local`
+to read runs without a running server.
 """
 
 import csv
@@ -32,7 +24,7 @@ WALL = 10.5  # slots >= 11 have periods > the train window (omega < 2pi/128)
 
 
 def rows() -> list[dict]:
-    """One dict per finished 2000-step run, straight from `export runs`."""
+    """Return completed 2000-step runs from the Fluksio export."""
     with tempfile.TemporaryDirectory() as directory:
         out = Path(directory) / "runs.csv"
         subprocess.run(
@@ -70,7 +62,7 @@ def rows() -> list[dict]:
 
 
 def arr(snap: dict, key: str) -> np.ndarray:
-    """A snapshot field as ndarray, json null (diverged) -> nan."""
+    """Convert a snapshot field to an array, replacing JSON null with NaN."""
 
     def conv(v):
         if isinstance(v, list):
@@ -81,7 +73,7 @@ def arr(snap: dict, key: str) -> np.ndarray:
 
 
 def g2(run: dict, idx: int) -> np.ndarray:
-    """Per-layer gradient second moment E[g^2] = signal + noise."""
+    """Return each layer's gradient second moment: signal + noise."""
     return arr(run["probes"][idx], "sig") + arr(run["probes"][idx], "noise")
 
 

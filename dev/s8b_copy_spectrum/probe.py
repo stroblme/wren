@@ -1,33 +1,9 @@
-"""S8b — copy-pathway spectrum probe (eval-only, follows s8).
+"""Measure which heads and RoPE pairs support device-ID copying in s8 weights.
 
-s8's addendum showed copying switch on with data diversity. This probe
-asks the QFM-native question on the trained weights: *which heads* carry
-the retrieval, and *which spectral bands* of the RoPE encoding carry the
-match signal at the copy edges.
-
-Method: teacher-force each needs-copy eval sample's reference text and
-capture, per layer and head, the pre-RoPE (post-QK-norm) queries/keys
-and the attention. Two instruments:
-
-- copy mass: attention from the positions writing the id bytes back to
-  the id's span in the state block, against a control span (a different
-  device's id — same format, wrong content), per (layer, head). The
-  contrast isolates content matching from format attention.
-- slot decomposition: the pre-softmax logit at the peak copy edge
-  decomposes exactly over RoPE's 2D frequency pairs:
-  c_i = (qa·ka + qb·kb) cos(Δω_i) + (qa·kb − qb·ka) sin(Δω_i).
-  The per-slot means over copy vs control edges say which bands do the
-  matching. Both identities are asserted against the stock forward on
-  the first batch.
-
-Run on a saved weights file (pull one with
-`uv run fluksio artifacts <run> s8_state_quant.weights`); pass the run's
-n_train so the eval split replays with genuinely unseen ids:
-
-    JAX_PLATFORMS=cpu uv run python dev/s8b_copy_spectrum/probe.py \
-        weights.npz --n-train 64000
-
-Writes figures/s8b-copy-spectrum.svg and prints the tables.
+Compare attention and logit contributions at source and control ID spans.
+Pass the training run's `n_train` to replay evaluation with unseen IDs.
+Write `figures/s8b-copy-spectrum.svg` and print summary tables. See README.md
+for the method and command.
 """
 
 import argparse
@@ -50,9 +26,10 @@ BANDS = [("byte", 2, 32), ("word", 32, 128), ("sample", 128, 1024), ("dc", 1024,
 def captured_forward(
     model: Wren, tokens: jnp.ndarray
 ) -> tuple[list[dict], jnp.ndarray]:
-    """The stock forward, keeping per layer: pre-RoPE q/k (post-QK-norm)
-    and the attention matrix. Returns (records, logits); logits are
-    asserted equal to model(tokens) on the first call."""
+    """Return per-layer pre-RoPE queries/keys, attention matrices, and logits.
+
+    Queries and keys are captured after QK normalization.
+    """
     _, seq = tokens.shape
     x = model.embed(tokens)
     records = []
@@ -76,8 +53,10 @@ def captured_forward(
 def slot_contributions(
     qh: jnp.ndarray, kh: jnp.ndarray, q_pos: int, k_pos: int, head: int
 ) -> np.ndarray:
-    """Per-frequency-pair contributions to the (q_pos <- k_pos) logit of
-    one head; their sum equals the roped dot product (asserted below)."""
+    """Return RoPE-pair contributions to one head's logit at (q_pos, k_pos).
+
+    Their sum equals the rotary-encoded dot product.
+    """
     half = qh.shape[-1] // 2
     freqs = 1.0 / (10000.0 ** (jnp.arange(half) / half))
     qa, qb = qh[0, q_pos, head, :half], qh[0, q_pos, head, half:]
@@ -88,8 +67,7 @@ def slot_contributions(
 
 
 def spans(text: str, value: str, control: str) -> tuple[range, range, range] | None:
-    """Byte spans: the value in the state block (source), the value in the
-    call line (emit), and the control id in the state block."""
+    """Locate byte spans for the source value, emitted value, and control device ID."""
     if not text.isascii():
         return None
     source = text.find(value)

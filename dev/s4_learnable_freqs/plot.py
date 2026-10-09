@@ -1,13 +1,7 @@
-"""S4 deliverable figure: spectrum migration, length generalization, probe.
+"""Plot spectrum changes, length generalization, and the frequency probe.
 
-Reads the engine's run table and writes figures/s4-learnable-freqs.svg. Left:
-init vs learned spectrum per freq_lr. Middle: held-out bits/byte at eval
-windows {128, 192, 256} per mode. Right: the Rotosolve-precondition probe,
-loss over one period of frequency 8.
-
-Data comes from `fluksio export runs`, which carries the json outputs as
-dotted `metric.*` columns and records each run's resolved inputs. `--local`
-boots the engine in this process, so plotting needs no server.
+Read Fluksio runs and write `figures/s4-learnable-freqs.svg`. Export with
+`--local` to read runs without a running server.
 """
 
 import csv
@@ -34,12 +28,10 @@ METRICS = ("freq_history", "probe_omegas", "probe_losses") + tuple(
 
 
 def rows() -> list[dict]:
-    """One dict per finished non-smoke run, straight from `export runs`.
+    """Return completed runs, excluding smoke runs.
 
-    Written to a file rather than read from stdout: booting the engine
-    prints to it as well. Runs recorded before the engine folded a flow's
-    initials into a run's inputs have blank param cells, so the initials
-    (mode fixed, freq_lr 3e-3, seed 0, steps 2000) still fill in here.
+    Export through a file because engine startup also writes to stdout. Fill
+    missing parameters in older runs from the flow's original defaults.
     """
     with tempfile.TemporaryDirectory() as directory:
         out = Path(directory) / "runs.csv"

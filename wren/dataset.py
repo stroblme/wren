@@ -1,17 +1,8 @@
-"""Training corpora.
+"""Generated home samples and external tool-call datasets.
 
-The built-in corpus is generated: random houses (areas, devices with
-random ids, current state) paired with commands whose correct tool calls
-follow deterministic rules from that state. The state travels in the
-prompt, so argument values must be *copied* out of it -- and eval houses
-use device ids never seen in training, which makes exact match a test of
-retrieval rather than memorization (study s7, dev/s7_bottleneck).
-
-External datasets (downloaded on demand into data/, gitignored):
-- mobile-actions (Google, CC-BY-4.0): 7 phone functions, the one needle
-  benchmark feasible at Wren's scale -- our external baseline.
-- Home-Assistant-Requests (acon96, MIT): Wren's actual domain, used by the
-  later stages that grow the context to hold device state.
+Home samples pair device state with commands and deterministic target calls;
+evaluation uses device IDs absent from training. External datasets are
+downloaded on demand into `data/`.
 """
 
 import datetime
@@ -101,7 +92,7 @@ _FILES = {
 
 
 def fetch(name: str) -> list[pathlib.Path]:
-    """Download a dataset's files into data/<name>/ once; return the paths."""
+    """Download missing dataset files into `data/<name>/` and return their paths."""
     folder = DATA / name
     folder.mkdir(parents=True, exist_ok=True)
     paths = []
@@ -114,7 +105,7 @@ def fetch(name: str) -> list[pathlib.Path]:
 
 
 def render_call(name: str, arguments: dict) -> str:
-    """One call in Wren's output format, arguments in canonical key order."""
+    """Render a tool call with arguments sorted by key."""
     inner = ", ".join(f"{k}={v!r}" for k, v in sorted(arguments.items()))
     return f">> {name}({inner})"
 
@@ -127,10 +118,10 @@ Sample = tuple[str, list[tuple[str, dict]]]
 
 
 def _render_mobile_actions(row: dict) -> Sample:
-    """Prompt is a timestamp line plus the user request; the tool schemas
-    are left out -- the 7-function surface lives in the weights, Wren's
-    implicit-tool mode. The timestamp stays because calendar calls resolve
-    relative dates against it."""
+    """Render the timestamp and request without tool schemas.
+
+    The timestamp provides the reference for relative dates in calendar calls.
+    """
     messages = {m["role"]: m for m in row["messages"]}
     m = _TIMESTAMP.search(messages["developer"]["content"])
     stamp = f"{m.group(1)} {m.group(2)}\n" if m else ""
@@ -143,7 +134,7 @@ def _render_mobile_actions(row: dict) -> Sample:
 
 
 def mobile_actions() -> tuple[list[Sample], list[Sample]]:
-    """(train, eval) samples, split by the row's own metadata field."""
+    """Return (train, eval) samples using each row's metadata split."""
     [path] = fetch("mobile_actions")
     splits: dict[str, list[Sample]] = {"train": [], "eval": []}
     with open(path) as lines:
@@ -154,9 +145,10 @@ def mobile_actions() -> tuple[list[Sample], list[Sample]]:
 
 
 def to_text(samples: list[Sample]) -> str:
-    """Samples as one training stream, blank lines marking the boundaries.
-    A sample without calls (irrelevance: the model should abstain) is just
-    its prompt."""
+    """Join samples into a training stream separated by blank lines.
+
+    Samples without calls contain only their prompt, teaching abstention.
+    """
     return "\n".join(
         prompt
         + ("\n".join(render_call(n, a) for n, a in calls) + "\n" if calls else "")
@@ -165,8 +157,7 @@ def to_text(samples: list[Sample]) -> str:
 
 
 def mobile_actions_surface() -> dict[str, list[str]]:
-    """{function name: parameter names} from the dataset's tool schemas --
-    the reference for the hallucination metric."""
+    """Return {function name: parameter names} for hallucination scoring."""
     [path] = fetch("mobile_actions")
     with open(path) as lines:
         row = json.loads(next(lines))
@@ -197,8 +188,7 @@ _IRRELEVANT = {
 def irrelevant(
     n_train: int = 200, n_eval: int = 40
 ) -> tuple[list[Sample], list[Sample]]:
-    """(train, eval) no-call samples; the eval prompts are types never seen
-    in training, so abstention has to generalize."""
+    """Return (train, eval) samples without calls, using distinct prompt types."""
     rng = random.Random(0)
     unique = [t.format(s) for t, slots in _IRRELEVANT.items() for s in slots]
     rng.shuffle(unique)
@@ -226,10 +216,7 @@ _HA_CALLS = re.compile(r"```homeassistant\n(.*?)```", re.DOTALL)
 
 
 def _render_home_assistant(row: dict) -> Sample:
-    """Prompt is the user request alone -- the 38-service surface lives in
-    the weights (implicit-tool mode), and the original system message's
-    device list is dropped: holding device state in context is a later
-    stage. Calls keep their native dotted service names."""
+    """Render the request and native service calls, omitting the device list."""
     turns = {t["from"]: t["value"] for t in row["conversations"]}
     calls = []
     for block in _HA_CALLS.findall(turns["assistant"]):
@@ -240,9 +227,7 @@ def _render_home_assistant(row: dict) -> Sample:
 
 
 def home_assistant() -> tuple[list[Sample], list[Sample]]:
-    """(train, test) samples. Rows whose reply carries no service call are
-    dropped: they answer status questions from the device list we do not
-    include."""
+    """Return (train, test) samples, excluding replies without service calls."""
 
     def load(path: pathlib.Path) -> list[Sample]:
         with open(path) as lines:
@@ -290,11 +275,11 @@ _DELAYS = [5, 10, 15, 20, 30, 45, 60, 90]
 
 
 def _house(rng: random.Random, avoid: set[str]) -> dict:
-    """A random home. The living room always exists and holds a light,
-    media and heating, so every rule below has its target; other rooms get
-    a light plus a random subset, outside areas a light and watering.
-    Device ids are random slugs, unique within the house and outside
-    `avoid` (the eval split avoids every training id)."""
+    """Generate a home with unique device IDs excluding `avoid`.
+
+    The living room always has light, media, and heating devices. Other rooms
+    have a light and optional devices; outdoor areas have light and water.
+    """
     used = set(avoid)
 
     def dev(kind: str) -> tuple[str, str]:
@@ -326,11 +311,7 @@ def _house(rng: random.Random, avoid: set[str]) -> dict:
 
 
 def _render_state(house: dict, keep: list[str]) -> str:
-    """The state block, pruned to `keep` — the retrieval step the deployed
-    pipeline performs: only the areas relevant to the request (plus the
-    distractors the retriever would let through) reach the context.
-    Rendered by the library's `render_state`, so inference reads the same
-    format."""
+    """Render the areas in `keep` using the library's state format."""
     areas = {
         area: [Device(kind, i, s) for kind, (i, s) in devs.items()]
         for area, devs in house["areas"].items()
@@ -342,17 +323,14 @@ def _render_state(house: dict, keep: list[str]) -> str:
 
 
 def _keep(house: dict, rng: random.Random, *needed: str) -> list[str]:
-    """The needed areas plus one or two distractors, in house order, so
-    the model still has to find the right line."""
+    """Return needed areas and one or two distractors in house order."""
     others = [a for a in house["areas"] if a not in needed]
     extra = set(rng.sample(others, min(len(others), rng.randint(1, 2))))
     return [a for a in house["areas"] if a in {*needed} | extra]
 
 
 def _command(house: dict, rng: random.Random) -> Sample:
-    """A device command: direct or indirect phrasing, sometimes delayed
-    ("... in 10m" becomes a delay argument), sometimes area-less (the
-    target then comes from the user's state line)."""
+    """Generate a device command, optionally delayed or without an area name."""
     if rng.random() < 0.15:  # area-less
         if house["user"] == "away":
             house["user"] = rng.choice(list(house["areas"]))
@@ -389,9 +367,7 @@ def _reading(house: dict, rng: random.Random) -> Sample:
 
 
 def _coming_home(house: dict, rng: random.Random) -> Sample:
-    """The implication rule: heat now when it is cold outside, light on
-    arrival when it is dark and the living room light is off. Both calls,
-    one, or none, depending on the state."""
+    """Heat the living room if cold; turn on its light at arrival if dark and off."""
     house["user"] = "away"
     m = rng.choice(_DELAYS)
     prompt = rng.choice(COMING_HOME).format(m=m)
@@ -415,14 +391,14 @@ def _scene(house: dict, rng: random.Random) -> Sample:
 
 
 def _chatter(house: dict, rng: random.Random) -> Sample:
-    """Off-domain talk with a state block: abstain."""
+    """Generate unrelated chatter with a state block and no target calls."""
     template, slots = rng.choice(list(_IRRELEVANT.items()))
     prompt = template.format(rng.choice(slots))
     return _render_state(house, _keep(house, rng)) + prompt + "\n", []
 
 
 def _missing(house: dict, rng: random.Random) -> Sample:
-    """A command for a device kind the area does not have: abstain."""
+    """Request a device kind absent from the area, with no target calls."""
     area, kind = rng.choice(
         [
             (area, kind)
@@ -438,8 +414,7 @@ def _missing(house: dict, rng: random.Random) -> Sample:
 
 
 def _stateless(house: dict, rng: random.Random) -> Sample:
-    """No state block at all (the bare CLI prompt shape): the device id
-    falls back to the area slug."""
+    """Generate a command without state, using the area slug as the device ID."""
     kind, action = rng.choice(list(_ACTIONS))
     pool = AREAS if kind == "light" else OUTSIDE if kind == "water" else ROOMS
     area = rng.choice(pool)
@@ -461,10 +436,11 @@ _BUILDERS = [
 def home(
     n_train: int = 8000, n_eval: int = 400, seed: int = 0
 ) -> tuple[list[Sample], list[Sample]]:
-    """(train, eval) state-conditioned samples, one generated house each.
+    """Return (train, eval) samples, each with a generated house.
 
-    Eval houses draw their device ids outside the set training ever saw,
-    so eval exact match measures copying values out of the state block."""
+    Evaluation device IDs never appear in training, so exact match tests copying
+    from the state block.
+    """
     rng = random.Random(seed)
     builders, weights = zip(*_BUILDERS)
 
@@ -483,6 +459,5 @@ def home(
 
 
 def home_corpus() -> str:
-    """The built-in training corpus: the generated train split as one
-    stream (`wren --train`'s default)."""
+    """Return the generated training split as text, the default for `wren --train`."""
     return to_text(home()[0])

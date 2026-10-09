@@ -1,41 +1,8 @@
-"""S6 — spectral-aware attention heads (go per the s5 verdict).
+"""Compare shared, banded, and partly learned RoPE spectra across heads.
 
-Three arms over the s4 protocol (Home-Assistant-Requests, seq 128, 2000
-steps, muon 3e-3), differing only in how the rope spectrum is laid out
-across the 4 heads:
-
-- shared:         the stock spectrum 10000^(-2i/d) in every head, frozen —
-                  the control, byte-identical to wren.model.Wren.
-- banded:         each head one contiguous frequency band, frozen. Edges at
-                  periods {2pi, 32, 128, 1024, 2pi*10000^(31/32)} bytes —
-                  byte/short-word, word/line (up to the train window),
-                  sample (s5's high-power 149–265 B ramp band), long/DC.
-                  32 log-spaced frequencies per head; the union spans
-                  exactly the stock range, so only the allocation differs.
-- banded_learned: banded init, frequencies trainable — except slots with
-                  omega < 2pi/seq_len, frozen at the prior. s4 showed
-                  omega-drift in that band is pure extrapolation damage and
-                  s5 that its *coefficients* still do the logit work, so the
-                  prior keeps those representatives and data adjusts the
-                  spectrum only where the training window can rank it.
-
-Parameter counts match across arms (log_freqs exists everywhere; the fixed
-arms just never step it — s4's routing pattern). Length generalization is
-held-out bits/byte at windows {128, 192, 256}. Per-head instruments, taken
-on held-out windows at 128 and 256: normalized attention entropy (s5's
-estimator, kept per head) and the attention-distance profile — attention
-mass per log2 distance bin, which shows directly whether banded heads
-specialize to their scale.
-
-The training node declares `resources={"gpus": 1}`; the engine must know
-the card is there or it trains on the CPU. `.fluksio/env` carries
-`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
-
-    uv run fluksio sync dev/s6_banded_heads
-    uv run fluksio sweep s6_banded_heads --param mode=shared,banded,banded_learned --param seed=0,1,2
-
-Self-check (parity with the stock model, band tiling, instruments,
-optimizer routing): `uv run python dev/s6_banded_heads/study.py`
+Measure held-out bits/byte, per-head entropy, and attention-distance
+profiles. In the learned arm, frequencies below 2*pi/seq_len stay frozen.
+See README.md for the protocol and reproduction commands.
 """
 
 import math
@@ -61,17 +28,16 @@ NBINS = 9  # log2 distance bins: 0, 1, 2–3, ..., 128–255 (window <= 256)
 
 
 def stock_spectrum(n_heads: int, half: int) -> jax.Array:
-    """The stock rope spectrum, one copy per head: shape (heads, half)."""
+    """Return the stock RoPE spectrum for each head, shape (heads, half)."""
     freqs = 1.0 / (10000.0 ** (jnp.arange(half) / half))
     return jnp.tile(freqs[None, :], (n_heads, 1))
 
 
 def band_spectrum(n_heads: int, half: int) -> jax.Array:
-    """Per-head banded spectrum, shape (heads, half), high frequency first.
+    """Return per-head frequency bands, shape (heads, half), highest frequency first.
 
-    Head h gets `half` log-spaced frequencies over [edge_h, edge_{h+1}),
-    half-open so heads tile without duplicates; the last head includes its
-    low edge so the union endpoints equal the stock spectrum's.
+    Bands are half-open to avoid duplicate frequencies. Include the final low
+    edge so the union spans the stock spectrum's endpoints.
     """
     assert n_heads == len(BAND_PERIODS) + 1
     # Descending omega: stock maximum, the interior scale edges, stock minimum.
@@ -90,10 +56,7 @@ def band_spectrum(n_heads: int, half: int) -> jax.Array:
 
 
 def rope_heads(x: jax.Array, freqs: jax.Array) -> jax.Array:
-    """wren.model.rope with a per-head spectrum, freqs (heads, half).
-
-    No offset: s6 measures loss on full windows, there is no decode path.
-    """
+    """Apply RoPE with `freqs` (heads, half), starting at position 0."""
     _, seq, _, _ = x.shape
     half = freqs.shape[1]
     angles = jnp.arange(seq)[:, None, None] * freqs[None, :, :]  # (seq, heads, half)
@@ -104,10 +67,9 @@ def rope_heads(x: jax.Array, freqs: jax.Array) -> jax.Array:
 
 
 class BandedBlock(AttentionBlock):
-    """AttentionBlock with a per-head rope spectrum injected per call.
+    """Attention block using per-head RoPE spectra in `forward`.
 
-    `forward(x, freqs)` is the stock `__call__` with rope_heads; the
-    inherited __call__/decode are unused (no generation in s6).
+    Inherited `__call__` and `decode` methods use the stock spectrum.
     """
 
     def forward(self, x: jax.Array, freqs: jax.Array) -> jax.Array:
@@ -131,11 +93,10 @@ class BandedBlock(AttentionBlock):
     def head_stats(
         self, x: jax.Array, freqs: jax.Array
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        """forward with per-head instruments.
+        """Return block output, entropy (heads,), and distance profiles (heads, NBINS).
 
-        Returns (block output, per-head normalized attention entropy
-        (heads,), per-head attention-distance profile (heads, NBINS) —
-        attention mass per log2 distance bin, rows summing to 1).
+        Entropy is normalized per query; profiles give attention mass in log2
+        distance bins, with each row summing to 1.
         """
         batch, seq, dim = x.shape
         h = self.norm(x)
@@ -169,13 +130,10 @@ class BandedBlock(AttentionBlock):
 
 
 class BandedWren(Wren):
-    """Wren with an explicit per-head rope spectrum, shape (heads, half).
+    """Wren with per-head RoPE spectra of shape (heads, half).
 
-    Draws parameters in the same order as Wren.__init__, so with the stock
-    spectrum and the same seed it is byte-identical to the stock model
-    (pinned by the self-check below). Whether — and which slots of —
-    log_freqs train is the optimizer's business (freq_routed), not the
-    model's.
+    Stock frequencies and the same seed reproduce stock Wren parameters.
+    `freq_routed` controls which spectrum entries are trained.
     """
 
     def __init__(self, cfg: Config, rngs: nnx.Rngs, init_freqs: jax.Array):
@@ -195,7 +153,7 @@ class BandedWren(Wren):
         return self.embed.attend(self.norm(x))
 
     def profile(self, tokens: jax.Array) -> tuple[jax.Array, jax.Array]:
-        """(per-layer per-head entropy (L, H), distance profile (L, H, NBINS))."""
+        """Return layer/head entropy (L, H) and distance profiles (L, H, NBINS)."""
         x = self.embed(tokens)
         freqs = jnp.exp(self.log_freqs.value)
         ents, profiles = [], []
@@ -209,10 +167,10 @@ class BandedWren(Wren):
 def freq_routed(
     lr: float, freq_lr: float, mask: jax.Array | None
 ) -> optax.GradientTransformation:
-    """wren.train.muon on everything but log_freqs; the spectrum gets its own
-    Adam at freq_lr on the slots `mask` marks trainable (gradients on frozen
-    slots are zeroed before Adam, so their moments never accumulate), or
-    frozen updates entirely in the fixed arms (mask None) — s4's routing."""
+    """Use Muon for weights and Adam at `freq_lr` for trainable spectrum slots.
+
+    Zero frozen-slot gradients before Adam; `mask=None` freezes the spectrum.
+    """
 
     def labels(params: dict) -> dict:
         return jax.tree_util.tree_map_with_path(
@@ -242,7 +200,7 @@ def _profile(model: BandedWren, x: jax.Array) -> tuple[jax.Array, jax.Array]:
 
 
 def held_windows(held: jax.Array, seq_len: int) -> tuple[jax.Array, jax.Array]:
-    """Non-overlapping (inputs, targets) windows over the held-out stream."""
+    """Split the held-out stream into non-overlapping (input, target) windows."""
     windows = (len(held) - 1) // seq_len
     xs = held[: windows * seq_len].reshape(windows, seq_len)
     ys = held[1 : windows * seq_len + 1].reshape(windows, seq_len)
@@ -252,7 +210,7 @@ def held_windows(held: jax.Array, seq_len: int) -> tuple[jax.Array, jax.Array]:
 def eval_bpb(
     model: BandedWren, held: jax.Array, seq_len: int, batch_size: int
 ) -> float:
-    """Held-out cross-entropy in bits/byte at the given window length."""
+    """Return held-out cross-entropy in bits/byte at the given window length."""
     xs, ys = held_windows(held, seq_len)
     nats = [
         float(_ce(model, xs[i : i + batch_size], ys[i : i + batch_size]))

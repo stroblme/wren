@@ -1,34 +1,8 @@
-"""S6b — head-dim pressure: does banding pay when heads get narrow?
+"""Compare shared and banded RoPE spectra as attention heads narrow.
 
-Follow-up to s6, which found banding loss-neutral at 4 heads x 32 frequency
-pairs: each shared head is a spectral superset, so the prior had nothing to
-add. This study shrinks head_dim by raising n_heads at fixed dim 256 —
-heads {4, 8, 16, 32}, head_dim {64, 32, 16, 8} — so the shared arm's
-per-head spectrum falls from 32 to 4 distinct frequencies while the banded
-union always holds n_heads x half = 128 distinct frequencies tiling the
-same range (s6's four scale bands, each subdivided log-uniformly into
-n_heads/4 contiguous sub-bands, one head per sub-band). Prediction from
-the s6 verdict: the shared arm degrades before the banded arm as per-head
-resolution collapses; the arm *gap* at each head count identifies the
-spectral-resolution effect, while absolute degradation with head count is
-confounded (value-head width, per-head softmax) and shared by both arms.
-
-Two arms only — the learnable-spectrum thread is closed (s6c). Parameter
-counts match between arms at every head count. Protocol and instruments
-are s6's: Home-Assistant-Requests, dim 256, seq 128, batch 32, 2000 steps,
-muon 3e-3; held-out bits/byte at windows {128, 192, 256}; per-head
-normalized attention entropy and attention-distance profiles at windows
-{128, 256}.
-
-The training node declares `resources={"gpus": 1}`; the engine must know
-the card is there or it trains on the CPU. `.fluksio/env` carries
-`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
-
-    uv run fluksio sync dev/s6b_head_pressure
-    uv run fluksio sweep s6b_head_pressure --param mode=shared,banded --param n_heads=4,8,16,32 --param seed=0,1,2
-
-Self-check (parity with the stock model at 4 and 8 heads, band tiling,
-instruments, frozen spectrum): `uv run python dev/s6b_head_pressure/study.py`
+Vary head count at fixed model width, measuring loss, held-out bits/byte,
+and per-head attention statistics. Spectra stay frozen in both arms. See
+README.md for the protocol and reproduction commands.
 """
 
 import math
@@ -53,21 +27,18 @@ NBINS = 9  # log2 distance bins: 0, 1, 2–3, ..., 128–255 (window <= 256)
 
 
 def stock_spectrum(n_heads: int, half: int) -> jax.Array:
-    """The stock rope spectrum, one copy per head: shape (heads, half)."""
+    """Return the stock RoPE spectrum for each head, shape (heads, half)."""
     freqs = 1.0 / (10000.0 ** (jnp.arange(half) / half))
     return jnp.tile(freqs[None, :], (n_heads, 1))
 
 
 def band_spectrum(n_heads: int, half: int) -> jax.Array:
-    """Per-head banded spectrum, shape (heads, half), high frequency first.
+    """Return per-head frequency bands, shape (heads, half), highest frequency first.
 
-    The four scale bands are each split log-uniformly into n_heads/4
-    contiguous sub-bands; head h gets `half` log-spaced frequencies over
-    its sub-band, half-open so heads tile without duplicates (the last
-    head includes its low edge). The union is always n_heads * half
-    distinct frequencies over the stock range — constant total resolution
-    while the shared arm's per-head resolution falls with head_dim.
-    At n_heads=4 this reduces to s6's band_spectrum exactly.
+    Split each of four scale bands into n_heads/4 logarithmic sub-bands,
+    excluding shared boundaries except the final low edge. The union has
+    n_heads * half distinct frequencies across the stock range. At four
+    heads, this matches s6's band_spectrum.
     """
     assert n_heads % 4 == 0
     edges = [
@@ -90,10 +61,7 @@ def band_spectrum(n_heads: int, half: int) -> jax.Array:
 
 
 def rope_heads(x: jax.Array, freqs: jax.Array) -> jax.Array:
-    """wren.model.rope with a per-head spectrum, freqs (heads, half).
-
-    No offset: s6b measures loss on full windows, there is no decode path.
-    """
+    """Apply RoPE with `freqs` (heads, half), starting at position 0."""
     _, seq, _, _ = x.shape
     half = freqs.shape[1]
     angles = jnp.arange(seq)[:, None, None] * freqs[None, :, :]  # (seq, heads, half)
@@ -104,10 +72,9 @@ def rope_heads(x: jax.Array, freqs: jax.Array) -> jax.Array:
 
 
 class BandedBlock(AttentionBlock):
-    """AttentionBlock with a per-head rope spectrum injected per call.
+    """Attention block using per-head RoPE spectra in `forward`.
 
-    `forward(x, freqs)` is the stock `__call__` with rope_heads; the
-    inherited __call__/decode are unused (no generation in s6b).
+    Inherited `__call__` and `decode` methods use the stock spectrum.
     """
 
     def forward(self, x: jax.Array, freqs: jax.Array) -> jax.Array:
@@ -131,11 +98,10 @@ class BandedBlock(AttentionBlock):
     def head_stats(
         self, x: jax.Array, freqs: jax.Array
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        """forward with per-head instruments.
+        """Return block output, entropy (heads,), and distance profiles (heads, NBINS).
 
-        Returns (block output, per-head normalized attention entropy
-        (heads,), per-head attention-distance profile (heads, NBINS) —
-        attention mass per log2 distance bin, rows summing to 1).
+        Entropy is normalized per query; profiles give attention mass in log2
+        distance bins, with each row summing to 1.
         """
         batch, seq, dim = x.shape
         h = self.norm(x)
@@ -169,12 +135,9 @@ class BandedBlock(AttentionBlock):
 
 
 class BandedWren(Wren):
-    """Wren with an explicit per-head rope spectrum, shape (heads, half).
+    """Wren with frozen per-head RoPE spectra of shape (heads, half).
 
-    Draws parameters in the same order as Wren.__init__, so with the stock
-    spectrum and the same seed it is byte-identical to the stock model at
-    any head count (pinned by the self-check below). The spectrum never
-    trains in s6b; freq_routed keeps it frozen.
+    Stock frequencies and the same seed reproduce stock Wren parameters.
     """
 
     def __init__(self, cfg: Config, rngs: nnx.Rngs, init_freqs: jax.Array):
@@ -194,7 +157,7 @@ class BandedWren(Wren):
         return self.embed.attend(self.norm(x))
 
     def profile(self, tokens: jax.Array) -> tuple[jax.Array, jax.Array]:
-        """(per-layer per-head entropy (L, H), distance profile (L, H, NBINS))."""
+        """Return layer/head entropy (L, H) and distance profiles (L, H, NBINS)."""
         x = self.embed(tokens)
         freqs = jnp.exp(self.log_freqs.value)
         ents, profiles = [], []
@@ -206,9 +169,10 @@ class BandedWren(Wren):
 
 
 def freq_routed(lr: float) -> optax.GradientTransformation:
-    """wren.train.muon on everything but log_freqs, which stays frozen —
-    without the route muon would orthogonalize the (heads, half) spectrum
-    as if it were a weight matrix."""
+    """Use Muon for model weights while keeping `log_freqs` frozen.
+
+    Routing prevents Muon from treating the 2-D spectrum as a weight matrix.
+    """
 
     def labels(params: dict) -> dict:
         return jax.tree_util.tree_map_with_path(
@@ -234,7 +198,7 @@ def _profile(model: BandedWren, x: jax.Array) -> tuple[jax.Array, jax.Array]:
 
 
 def held_windows(held: jax.Array, seq_len: int) -> tuple[jax.Array, jax.Array]:
-    """Non-overlapping (inputs, targets) windows over the held-out stream."""
+    """Split the held-out stream into non-overlapping (input, target) windows."""
     windows = (len(held) - 1) // seq_len
     xs = held[: windows * seq_len].reshape(windows, seq_len)
     ys = held[1 : windows * seq_len + 1].reshape(windows, seq_len)
@@ -244,7 +208,7 @@ def held_windows(held: jax.Array, seq_len: int) -> tuple[jax.Array, jax.Array]:
 def eval_bpb(
     model: BandedWren, held: jax.Array, seq_len: int, batch_size: int
 ) -> float:
-    """Held-out cross-entropy in bits/byte at the given window length."""
+    """Return held-out cross-entropy in bits/byte at the given window length."""
     xs, ys = held_windows(held, seq_len)
     nats = [
         float(_ce(model, xs[i : i + batch_size], ys[i : i + batch_size]))

@@ -1,14 +1,7 @@
-"""S2 — external benchmark baseline on google/mobile-actions.
+"""Train and evaluate the baseline on google/mobile-actions.
 
-Implicit-tool mode: the 7-function surface lives in the weights; the prompt
-is the timestamp line plus the user request. Scored with ordered strict
-exact match (needle's protocol) plus its diagnostic companions, and
-bits-per-byte as the language-model-level metric. Reference points on this
-dataset: needle 2 (45M params) 63.7%, FunctionGemma 270M (fine-tuned).
-
-The training node declares `resources={"gpus": 1}`; the engine must know
-the card is there or it trains on the CPU. `.fluksio/env` carries
-`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
+Prompts contain timestamps and requests; tool schemas are learned from
+training. See README.md for the protocol and reproduction commands.
 """
 
 import math
@@ -119,8 +112,7 @@ def benchmark(
         raise RuntimeError("no card declared: `fluksio serve --gpus 1`")
 
     def own_lines(generated: str) -> str:
-        """The model's continuation up to its first empty line -- past that
-        it is hallucinating the next training sample, not answering."""
+        """Keep the generated continuation through its first blank line."""
         return "\n".join(itertools.takewhile(bool, generated.split("\n")))
 
     model = Wren(Config(context=768), rngs=nnx.Rngs(seed))

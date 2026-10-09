@@ -1,15 +1,7 @@
-"""S6 deliverable figure: length generalization, head specialization, drift.
+"""Plot length generalization, head statistics, and spectrum changes.
 
-Reads the engine's run table and writes figures/s6-banded-heads.svg. Panel 1:
-held-out bits/byte at eval windows {128, 192, 256} per arm. Panel 2:
-per-head attention-distance profiles at window 256 — the banded heads as
-lines against the shared arm's head spread. Panel 3: per-head normalized
-attention entropy. Panel 4: the banded_learned arm's spectrum, init vs
-final, with the frozen slots and the seq-128 aliasing wall marked.
-
-Data comes from `fluksio export runs`, which carries the json outputs as
-`metric.*` columns and records each run's resolved inputs. `--local` boots
-the engine in this process, so plotting needs no server.
+Read Fluksio runs and write `figures/s6-banded-heads.svg`. Export with
+`--local` to read runs without a running server.
 """
 
 import csv
@@ -37,7 +29,7 @@ METRICS = ("freq_history", "head_profiles") + tuple(f"bpb_{n}" for n in LENGTHS)
 
 
 def rows() -> list[dict]:
-    """One dict per finished non-smoke run, straight from `export runs`."""
+    """Return completed runs from the Fluksio export, excluding smoke runs."""
     with tempfile.TemporaryDirectory() as directory:
         out = Path(directory) / "runs.csv"
         subprocess.run(

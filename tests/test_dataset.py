@@ -56,7 +56,6 @@ def test_mixture_covers_the_sample_kinds():
 
 
 def test_prompts_fit_the_generation_budget():
-    """Pruned state blocks keep every prompt inside context - n_new, so
-    eval never trims a prompt's head (s8 protocol: 384 - 96)."""
+    """Check that prompts fit context - n_new bytes without truncation."""
     train, evals = home(300, 60)
     assert max(len(p.encode()) for p, _ in train + evals) <= 288

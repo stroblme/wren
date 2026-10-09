@@ -1,40 +1,8 @@
-"""S5 — QK-norm as a barren-plateau diagnostic.
+"""Measure how QK normalization affects training across model depths.
 
-QML's trainability instrument — gradient variance as a function of depth
-(McClean et al., arXiv:1803.11173) — applied to the SAN paper's claim that
-QK-norm is what keeps deep attention-only stacks trainable
-(arXiv:2607.18363). Two arms identical except for the per-head
-RMS-normalization of queries and keys, at depths {4, 8, 16, 32}, on the s4
-protocol (Home-Assistant-Requests, seq 128, batch 32, muon lr 3e-3 fixed —
-the tuned default; per-depth LR sweeps are out of scope).
-
-Instruments, all on K fixed probe batches shared across every run:
-
-- Per-layer gradient statistics over the block matrices (wqkv, wo), at init
-  and every probe_every steps. The per-parameter gradient over the K batches
-  splits into *signal* (squared mean gradient) and *noise* (variance across
-  batches, at the training batch size); their sum is the BP-style second
-  moment E[g^2] (over random inits the mean gradient is ~0, so E[g^2] is
-  the variance QML plots), their ratio the SNR the optimizer actually sees.
-- Attention entropy per layer, each query position normalized by its
-  maximum log(position+1), on one probe batch — softmax saturation is the
-  suspected classical mechanism where training fails.
-- Band-resolved (s4 addendum): the pre-softmax logit decomposes exactly
-  over RoPE's d/2 2D frequency pairs, so we record each slot's share of
-  logit power and, from the q/k column blocks of wqkv, per-slot gradient
-  signal/noise — s4 predicts the under-trained band (period > train
-  window) carries mostly batch noise. This is the s6 go/no-go data.
-
-The training node declares `resources={"gpus": 1}`; the engine must know
-the card is there or it trains on the CPU. `.fluksio/env` carries
-`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
-
-    uv run fluksio sync dev/s5_qknorm
-    uv run fluksio sweep s5_qknorm --param depth=4,8,16,32 \
-        --param qk_norm=on,off --param seed=0,1,2
-
-Self-check (parity with the stock model, decomposition exactness, probe
-algebra): `uv run python dev/s5_qknorm/study.py`
+Record gradient signal and noise, attention entropy, and logit power by
+RoPE frequency pair on fixed probe batches. See README.md for the
+protocol and reproduction commands.
 """
 
 import math
@@ -55,11 +23,9 @@ from wren.train import muon, sample_batch, train_step
 
 
 class ProbeBlock(AttentionBlock):
-    """AttentionBlock with QK-norm switchable off.
+    """Attention block with optional QK normalization.
 
-    `use_qk_norm` is a static flag; the norm modules are created either way
-    so the parameter draw order matches the stock block exactly (pinned by
-    the parity self-check), they are just bypassed in the off arm.
+    Create norm parameters in stock order, bypassing them when disabled.
     """
 
     def __init__(self, cfg: Config, rngs: nnx.Rngs, qk_norm: bool):
@@ -86,13 +52,9 @@ class ProbeBlock(AttentionBlock):
         return x + self.wo(out)
 
     def forward_stats(self, x: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
-        """__call__ with the logit decomposed over RoPE's frequency pairs.
+        """Return block output, normalized attention entropy, and power by RoPE pair.
 
-        Returns (block output, normalized attention entropy, per-slot logit
-        power). The rotated q.k product for pair i is exactly a_i cos(w_i
-        (n-m)) + b_i sin(w_i (n-m)), so summing the
-        per-pair contributions reproduces the attention scores — pinned by
-        the decomposition self-check.
+        Pair contributions sum to the pre-softmax attention scores.
         """
         batch, seq, dim = x.shape
         half = self.head_dim // 2
@@ -126,11 +88,9 @@ class ProbeBlock(AttentionBlock):
 
 
 class ProbeWren(Wren):
-    """Wren at configurable depth with switchable QK-norm.
+    """Wren with configurable depth and optional QK normalization.
 
-    Draws parameters in the same order as Wren.__init__, so with qk_norm on
-    and the same seed it is byte-identical to the stock model (pinned by the
-    self-check below).
+    With normalization enabled and the same seed, parameters match stock Wren.
     """
 
     def __init__(self, cfg: Config, rngs: nnx.Rngs, qk_norm: bool):
@@ -142,7 +102,7 @@ class ProbeWren(Wren):
         self.norm = nnx.RMSNorm(cfg.dim, rngs=rngs)
 
     def probe_stats(self, tokens: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
-        """(logits, per-layer entropy (L,), per-layer slot power (L, d/2))."""
+        """Return logits, layer entropy (L,), and layer/slot power (L, d/2)."""
         x = self.embed(tokens)
         ents, powers = [], []
         for block in self.blocks:
@@ -168,7 +128,7 @@ def _probe_stats(model: ProbeWren, tokens: jax.Array):
 
 
 def kernel_grads(grads) -> dict[tuple[int, str], np.ndarray]:
-    """(layer, 'wqkv'|'wo') -> gradient array, from an nnx grad state."""
+    """Extract {(layer, 'wqkv'|'wo'): gradient array} from an nnx gradient state."""
     out = {}
     for path, leaf in jax.tree_util.tree_flatten_with_path(grads)[0]:
         m = re.search(
@@ -185,8 +145,7 @@ def snapshot(
     probe_x: jax.Array,
     step: int,
 ) -> dict:
-    """One probe point: per-layer gradient signal/noise, attention entropy,
-    and the band-resolved stats, all as plain (json-able) lists."""
+    """Return gradient signal/noise, entropy, and frequency-pair statistics as lists."""
     cfg = model.cfg
     n = len(batches)
     sums: dict[tuple[int, str], list[np.ndarray]] = {}
@@ -235,8 +194,7 @@ def snapshot(
 
 
 def clean(x):
-    """json-safe: non-finite -> None (a diverged run must still export),
-    floats rounded to 6 significant digits (the blobs are large)."""
+    """Replace non-finite values with None and round floats to six significant digits."""
     if isinstance(x, dict):
         return {k: clean(v) for k, v in x.items()}
     if isinstance(x, list):
@@ -252,7 +210,7 @@ def _ce(model: ProbeWren, x: jax.Array, y: jax.Array) -> jax.Array:
 
 
 def eval_bpb(model: ProbeWren, held: jax.Array, seq_len: int, batch_size: int) -> float:
-    """Held-out cross-entropy in bits/byte at the given window length."""
+    """Return held-out cross-entropy in bits/byte at the given window length."""
     windows = (len(held) - 1) // seq_len
     xs = held[: windows * seq_len].reshape(windows, seq_len)
     ys = held[1 : windows * seq_len + 1].reshape(windows, seq_len)

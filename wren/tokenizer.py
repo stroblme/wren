@@ -1,10 +1,4 @@
-"""Byte-level tokenizer: every token is one UTF-8 byte, vocab size 256.
-
-There is no vocabulary to build and no out-of-vocabulary token: any text
-(or binary) round-trips exactly. The trade-off is that sequences are ~4x
-longer than with a learned BPE vocabulary, which matters little at Wren's
-small context sizes. Needle makes the same trade for the same reason.
-"""
+"""Encode text as UTF-8 byte IDs (0–255); replace invalid UTF-8 when decoding."""
 
 VOCAB_SIZE = 256
 

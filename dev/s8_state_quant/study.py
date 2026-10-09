@@ -1,30 +1,8 @@
-"""S8 — state-conditioned corpus × quantization-aware training.
+"""Compare fp32, int8, and ternary training on home and mobile-actions samples.
 
-Two questions at once, on the generated home corpus (wren.dataset.home):
-
-1. Does state-in-context data finally force copying? Eval houses use
-   device ids never seen in training, so held-out exact match *is* the
-   copy probe (s7 measured 0/400 copying on every previous corpus).
-2. What does quantization-aware training cost at 2M params? Arms:
-   fp32 (control), int8, and ternary a la BitNet b1.58 (absmean weights
-   in {-1, 0, +1}, arXiv:2402.17764; QAT with straight-through gradients,
-   arXiv:2310.11453). Weights are fake-quantized in the forward pass;
-   fp32 masters keep training stable. Embedding and norms stay fp32
-   (BitNet's practice; they are ~3% of parameters here).
-
-`packed_mb` reports the theoretical shipped size at 2/8/32 bits per
-attention weight -- no packed runtime exists yet, by design (runtime
-work is deferred).
-
-The training node declares `resources={"gpus": 1}`; the engine must know
-the card is there or it trains on the CPU. `.fluksio/env` carries
-`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
-
-    uv run fluksio sync dev/s8_state_quant
-    uv run fluksio sweep s8_state_quant --param quant=fp32,int8,ternary
-
-Self-check (quantizer values, straight-through gradient, arm parity):
-`uv run python dev/s8_state_quant/study.py`
+Quantized forward passes use fp32 master weights and straight-through
+gradients. Embeddings and norms remain fp32. See README.md for the
+protocol and reproduction commands.
 """
 
 import itertools
@@ -57,7 +35,7 @@ _ID = re.compile(r"^[lmhsw][a-z2-9]{4}$")
 
 
 def _ste(w: jax.Array, quant) -> jax.Array:
-    """Forward sees quant(w); the gradient passes straight through."""
+    """Use quantized weights in the forward pass and pass gradients through unchanged."""
     return w + jax.lax.stop_gradient(quant(w) - w)
 
 
@@ -67,7 +45,7 @@ def _int8(w: jax.Array) -> jax.Array:
 
 
 def _ternary(w: jax.Array) -> jax.Array:
-    """BitNet b1.58's absmean quantizer: {-1, 0, +1} times one scale."""
+    """Quantize weights to {-1, 0, +1} times their mean absolute value."""
     scale = jnp.mean(jnp.abs(w)) + 1e-12
     return jnp.clip(jnp.round(w / scale), -1, 1) * scale
 
@@ -87,9 +65,7 @@ BITS = {"fp32": 32, "int8": 8, "ternary": 2}
 
 
 def quantize_(model: Wren, mode: str) -> Wren:
-    """Point every attention projection at the quantizing forward. The
-    parameters are untouched fp32 masters, so the fp32 arm stays
-    byte-identical to stock Wren (pinned by the self-check)."""
+    """Use quantized attention projections while retaining fp32 master parameters."""
     if (cls := QUANT[mode]) is not None:
         for block in model.blocks:
             block.wqkv.__class__ = cls
@@ -98,15 +74,14 @@ def quantize_(model: Wren, mode: str) -> Wren:
 
 
 def packed_mb(model: Wren, mode: str) -> float:
-    """Shipped megabytes with attention weights at the arm's bit width."""
+    """Estimate packed megabytes using the arm's attention-weight bit width."""
     quantized = sum(b.wqkv.kernel.size + b.wo.kernel.size for b in model.blocks)
     rest = model.n_params() - quantized
     return (quantized * BITS[mode] + rest * 32) / 8 / 1e6
 
 
 def own_lines(generated: str) -> str:
-    """The model's continuation up to its first empty line -- past that
-    it is hallucinating the next training sample, not answering."""
+    """Keep the generated continuation through its first blank line."""
     return "\n".join(itertools.takewhile(bool, generated.split("\n")))
 
 
@@ -115,12 +90,11 @@ def own_lines(generated: str) -> str:
     provides=[Port("train_text", "str"), Port("eval_samples", "json")],
 )
 def dataset(corpus: str, n_train: int) -> dict:
-    """corpus 'home': the generated state corpus, where n_train sets the
-    number of *unique* samples — at the fixed token budget it is the
-    effective epoch count's inverse, the knob for the repetition-
-    suppresses-induction hypothesis (arXiv:2205.10487). corpus 'mobile':
-    the s2 stream (mobile-actions + ~2% synthetic negatives, needle's
-    benchmark; n_train is ignored — the split is the dataset's own)."""
+    """Build home samples or the mobile-actions stream with synthetic negatives.
+
+    `n_train` controls the number of unique home training samples; mobile-actions
+    uses its own split and ignores this parameter.
+    """
     import random
 
     from wren.dataset import home, irrelevant, mobile_actions, to_text

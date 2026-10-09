@@ -1,5 +1,4 @@
-"""The library API: no JAX on the import path, the trained state format,
-area selection, and commands against the shipped model."""
+"""Check imports, state rendering, area selection, and shipped-model calls."""
 
 import random
 import subprocess
@@ -41,7 +40,7 @@ def test_render_state():
 
 
 def test_dataset_renders_through_render_state():
-    """Training's state blocks are byte-identical to before the move."""
+    """Check that shared state rendering preserves the training format."""
     house = _house(random.Random(0), set())
     assert _render_state(house, list(house["areas"])) == (
         "18:14 out 10C dark\n"
@@ -102,8 +101,7 @@ def test_act():
 
 
 def test_act_maps_any_id_shape():
-    """The model only copies ids shaped like its training ids; act hands it
-    aliases and maps the calls back."""
+    """Check that device aliases map generated calls back to caller-provided IDs."""
     house = House(
         "08:00",
         12,

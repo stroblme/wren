@@ -1,49 +1,9 @@
-"""S4 — learnable RoPE frequencies.
+"""Compare fixed, learned, and FoPE-style RoPE spectra.
 
-Three arms over the same training protocol (Home-Assistant-Requests train
-split, seq 128, fixed step budget), differing only in the rope spectrum:
-
-- fixed:   the stock spectrum 10000^(-2i/d), frozen — the control.
-- learned: the spectrum is a trainable parameter, initialized at stock.
-- fope:    stock spectrum with the undertrained frequencies zeroed, frozen —
-           FoPE-style (arXiv:2412.17739): a frequency whose period exceeds
-           the training length (omega < 2*pi/seq_len) never completes a
-           cycle during training and is destructive at eval lengths beyond.
-
-The spectrum is parameterized in log space (omega = exp(theta)): steps
-become multiplicative, matching the geometric init, where an additive step
-sized for omega~1 would be catastrophic at omega~1e-4. One spectrum is
-shared across layers and heads, exactly as the stock rope implicitly does;
-per-layer spectra (LieRE, arXiv:2406.10322) are a later extension.
-
-Optimizer routing: wren.train.muon on everything else, a separate Adam on
-the spectrum with its own sweepable freq_lr — frequency locking (the
-optimizer stuck between spectral basins) is a step-size story, and this
-routing point is where a Rotosolve-style coordinate step would plug in.
-
-Length generalization is measured as held-out bits/byte at windows of
-{128, 192, 256}. After training, the Rotosolve-precondition probe sweeps
-one frequency over a full period with everything else frozen: relative
-positions are integers, so the loss is exactly 2*pi-periodic in each omega
-— a trig polynomial whose harmonic content (low-order or not) decides
-whether an analytic coordinate update is viable.
-
-Weights artifacts include the extra log_freqs array; wren.model.load
-ignores unknown keys and would silently rebuild the stock spectrum, so
-reload them study-side if ever needed.
-
-The training node declares `resources={"gpus": 1}`; the engine must know
-the card is there or it trains on the CPU. `.fluksio/env` carries
-`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
-
-    uv run fluksio sync dev/s4_learnable_freqs
-    uv run fluksio sweep s4_learnable_freqs --param mode=fixed --param seed=0,1,2
-    uv run fluksio sweep s4_learnable_freqs --param mode=learned --param freq_lr=1e-3,3e-3,1e-2 --param seed=0
-    uv run fluksio sweep s4_learnable_freqs --param mode=learned --param freq_lr=<best> --param seed=1,2
-    uv run fluksio sweep s4_learnable_freqs --param mode=fope --param seed=0,1,2
-
-Self-check (parity with the stock model, optimizer routing):
-`uv run python dev/s4_learnable_freqs/study.py`
+Evaluate held-out bits/byte at multiple window lengths and probe one
+frequency after training. Saved weights include `log_freqs`; reload with
+SpectralWren, since `wren.model.load` restores only the stock model. See
+README.md for the protocol and reproduction commands.
 """
 
 import math
@@ -65,16 +25,13 @@ LOG_ZERO = -30.0  # exp(-30) ~ 1e-13: DC at any context, and log-representable
 
 
 def spectrum(head_dim: int) -> jax.Array:
-    """The stock rope spectrum, as computed inside wren.model.rope."""
+    """Return the stock RoPE spectrum used by `wren.model.rope`."""
     half = head_dim // 2
     return 1.0 / (10000.0 ** (jnp.arange(half) / half))
 
 
 def rope_with(x: jax.Array, freqs: jax.Array) -> jax.Array:
-    """wren.model.rope with the spectrum passed in instead of hard-coded.
-
-    No offset: s4 measures loss on full windows, there is no decode path.
-    """
+    """Apply RoPE with an explicit spectrum to a full window, starting at position 0."""
     _, seq, _, _ = x.shape
     half = freqs.shape[0]
     angles = jnp.arange(seq)[:, None] * freqs[None, :]  # (seq, half)
@@ -85,10 +42,9 @@ def rope_with(x: jax.Array, freqs: jax.Array) -> jax.Array:
 
 
 class SpectralBlock(AttentionBlock):
-    """AttentionBlock with the rope spectrum injected per call.
+    """Attention block using an explicit RoPE spectrum in `forward`.
 
-    `forward(x, freqs)` is the stock `__call__` with rope_with; the
-    inherited __call__/decode are unused (no generation in s4).
+    Inherited `__call__` and `decode` methods use the stock spectrum.
     """
 
     def forward(self, x: jax.Array, freqs: jax.Array) -> jax.Array:
@@ -111,12 +67,10 @@ class SpectralBlock(AttentionBlock):
 
 
 class SpectralWren(Wren):
-    """Wren with one shared, explicitly parameterized rope spectrum.
+    """Wren with a shared log-parameterized RoPE spectrum.
 
-    Draws parameters in the same order as Wren.__init__, so with the stock
-    spectrum and the same seed it is byte-identical to the stock model
-    (pinned by the self-check below). Whether log_freqs actually trains is
-    the optimizer's business (freq_routed), not the model's.
+    Stock frequencies and the same seed reproduce stock Wren parameters.
+    `freq_routed` controls whether the spectrum is trained.
     """
 
     def __init__(self, cfg: Config, rngs: nnx.Rngs, init_freqs: jax.Array):
@@ -140,9 +94,10 @@ class SpectralWren(Wren):
 def freq_routed(
     lr: float, freq_lr: float, trainable: bool
 ) -> optax.GradientTransformation:
-    """wren.train.muon on everything but log_freqs (1-D, so it would fall
-    through to muon's inner AdamW at the matrix lr); the spectrum gets its
-    own Adam at freq_lr, or frozen updates in the fixed/fope arms."""
+    """Use Muon for model weights and separate Adam at `freq_lr` for `log_freqs`.
+
+    Freeze spectrum updates in the fixed and FoPE arms.
+    """
 
     def labels(params: dict) -> dict:
         return jax.tree_util.tree_map_with_path(
@@ -162,7 +117,7 @@ def _ce(model: SpectralWren, x: jax.Array, y: jax.Array) -> jax.Array:
 
 
 def held_windows(held: jax.Array, seq_len: int) -> tuple[jax.Array, jax.Array]:
-    """Non-overlapping (inputs, targets) windows over the held-out stream."""
+    """Split the held-out stream into non-overlapping (input, target) windows."""
     windows = (len(held) - 1) // seq_len
     xs = held[: windows * seq_len].reshape(windows, seq_len)
     ys = held[1 : windows * seq_len + 1].reshape(windows, seq_len)
@@ -172,7 +127,7 @@ def held_windows(held: jax.Array, seq_len: int) -> tuple[jax.Array, jax.Array]:
 def eval_bpb(
     model: SpectralWren, held: jax.Array, seq_len: int, batch_size: int
 ) -> float:
-    """Held-out cross-entropy in bits/byte at the given window length."""
+    """Return held-out cross-entropy in bits/byte at the given window length."""
     xs, ys = held_windows(held, seq_len)
     nats = [
         float(_ce(model, xs[i : i + batch_size], ys[i : i + batch_size]))
@@ -189,9 +144,10 @@ def probe_curve(
     n_points: int = 256,
     n_windows: int = 64,
 ) -> tuple[list[float], list[float]]:
-    """Loss as a function of frequency `idx` over one full period, the rest
-    frozen — the Rotosolve precondition probe (arm s4c). Restores the
-    model's spectrum afterwards."""
+    """Measure loss over one period of frequency `idx`, holding other weights fixed.
+
+    Restore the original spectrum afterward.
+    """
     xs, ys = held_windows(held, seq_len)
     x, y = xs[:n_windows], ys[:n_windows]
     saved = model.log_freqs.value

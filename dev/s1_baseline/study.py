@@ -1,13 +1,7 @@
-"""S1 — baseline: AdamW on the home corpus.
+"""Run the AdamW baseline on the home corpus as a Fluksio flow.
 
-Declared as a fluksio flow: `uv run fluksio run s1_baseline --follow` with
-the project-local engine (`uv run fluksio serve`) running. The nodes stay
-plain functions, so `python -c "from study import baseline; ..."` still
-works for debugging — fluksio.emit is a no-op outside a worker.
-
-The training node declares `resources={"gpus": 1}`; the engine must know
-the card is there or it trains on the CPU. `.fluksio/env` carries
-`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
+Start the engine with `uv run fluksio serve --gpus 1`. See README.md for
+the study protocol and reproduction commands.
 """
 
 import pathlib

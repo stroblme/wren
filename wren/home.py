@@ -1,18 +1,7 @@
-"""The library API: a house's state and a command in, device calls out.
+"""NumPy API for generating device calls from a command and house state.
 
-    from wren import Device, House, act
-
-    house = House("19:30", 6.0, dark=True, user_area="kitchen", areas={
-        "kitchen": [Device("light", "light.kitchen_ceiling", "off")],
-    })
-    calls, confidence = act("turn on the lights in the kitchen", house)
-    # [Call(tool='lights.on', args={'id': 'light.kitchen_ceiling'}, delay_s=None)]
-    # and 0.96
-
-Numpy only: nothing on this import path loads JAX. The caller describes
-its house with its own device ids; the text the model reads is rendered
-here, in the format the model was trained on (dataset.py renders its
-training houses through `render_state` too).
+`act(command, house)` returns calls using the caller's device IDs and a
+confidence score. `render_state` supplies the format used in training.
 """
 
 import dataclasses
@@ -40,9 +29,11 @@ BUDGET = 384 - N_NEW  # prompt bytes that fit beside them in the context
 
 @dataclass
 class Device:
-    """One device: `kind` from KINDS, the caller's `id`, and its `state` —
-    `on`/`off` (light, media, water), `up`/`down` (shutter) or whole
-    degrees like `21C` (heat)."""
+    """Device kind, caller-provided ID, and state.
+
+    Use a kind from `KINDS`; states are on/off for light, media, and water,
+    up/down for shutters, and whole degrees such as `21C` for heating.
+    """
 
     kind: str
     id: str
@@ -51,9 +42,11 @@ class Device:
 
 @dataclass
 class House:
-    """The state block: the clock (`HH:MM`), the outdoor temperature in °C
-    (rendered rounded), whether it is dark, the area the user is in
-    (None: away), and each area's devices, in display order."""
+    """House state with an HH:MM clock, outdoor temperature in °C, and devices.
+
+    `user_area=None` means away. Areas retain display order; temperature is
+    rounded when rendered.
+    """
 
     time: str
     outdoor_c: float
@@ -64,9 +57,10 @@ class House:
 
 @dataclass
 class Call:
-    """One tool call in the house's own terms, e.g. `lights.on` with
-    `{"id": <a Device.id>}` or `sensors.temperature` with `{"area": <an
-    area name>}`, to run `delay_s` seconds from now (None: immediately)."""
+    """Tool name and arguments using the house's device IDs and area names.
+
+    `delay_s` is the delay in seconds; None means run immediately.
+    """
 
     tool: str
     args: dict
@@ -74,12 +68,11 @@ class Call:
 
 
 def render_state(house: House, areas: Iterable[str] | None = None) -> str:
-    """The state block, with the lines of `areas` only (default: all), in
-    house order:
+    """Render state for selected `areas` in house order, or all areas by default.
 
-        19:30 out 6C dark
-        user kitchen
-        kitchen: light lk3m9 off, shutter sv8xr up
+    19:30 out 6C dark
+    user kitchen
+    kitchen: light lk3m9 off, shutter sv8xr up
     """
     keep = house.areas if areas is None else set(areas)
     lines = [
@@ -97,15 +90,10 @@ def render_state(house: House, areas: Iterable[str] | None = None) -> str:
 def select_areas(
     house: House, command: str, limit: int = 3, budget: int = BUDGET
 ) -> list[str]:
-    """The areas whose lines reach the context — the retrieval step that
-    training simulates (dataset._keep).
+    """Select areas for the prompt, returning them in house order.
 
-    Needed are the areas the command names; failing that, the user's area
-    and the living room (area-less commands resolve through the user line;
-    scenes and coming home act on the living room). Other areas pad the
-    block to `limit` lines, like the distractors training put beside the
-    needed one, and are the first to go when the prompt would exceed
-    `budget` bytes. Returned in house order.
+    Keep named areas, or the user's area and living room if none are named.
+    Add other areas up to `limit`, removing those extras to meet `budget` bytes.
     """
     text = command.lower()
     named = [a for a in house.areas if re.search(rf"\b{re.escape(a.lower())}\b", text)]
@@ -120,14 +108,11 @@ def select_areas(
 def act(
     command: str, house: House, *, model: dict | None = None
 ) -> tuple[list[Call], float]:
-    """The calls `command` asks for in `house`, and how sure the model is.
+    """Return calls for `command` in `house` and the lowest answer-byte probability.
 
-    The model reads aliases in the trained id shape instead of the
-    caller's ids (it copies nothing else reliably) and its calls are
-    mapped back. The confidence is the lowest probability it gave any
-    byte of its answer. An answer that does not parse, or
-    names a device or area not in the house, yields no calls. `model` is
-    a pack from `runtime.load_pack`; default: the one the package ships.
+    Device IDs are aliased to the training format and mapped back in the calls.
+    Return no calls if the answer fails to parse or references an unknown device
+    or area. `model` is a pack from `runtime.load_pack`; default to the shipped pack.
     """
     pack = model or _packaged()
     aliased, ids = _aliased(house)
@@ -152,9 +137,10 @@ def _prompt_bytes(house: House, areas: list[str], command: str) -> int:
 
 
 def _aliased(house: House) -> tuple[House, dict[str, str]]:
-    """The house with each device id replaced by a random one in the
-    trained shape, and the map back. Seeded: a house always gets the same
-    aliases, so the same request gets the same answer."""
+    """Return a house with training-shaped device aliases and the reverse ID map.
+
+    A fixed seed gives each house stable aliases.
+    """
     rng = random.Random(0)
     ids: dict[str, str] = {}
     areas = {}
@@ -169,8 +155,7 @@ def _aliased(house: House) -> tuple[House, dict[str, str]]:
 
 
 def _call(tool: str, args: dict, ids: dict[str, str], areas: dict[str, str]) -> Call:
-    """A parsed call in the house's terms: aliases back to device ids,
-    area slugs back to area names, `delay='20m'` to seconds."""
+    """Map aliases to device IDs, slugs to area names, and delays to seconds."""
     if "id" in args:
         args["id"] = ids[args["id"]]
     if "area" in args:

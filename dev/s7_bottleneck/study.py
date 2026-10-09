@@ -1,45 +1,8 @@
-"""S7 — bottleneck autopsy: where do exact-match points die?
+"""Diagnose tool-call failures in reference models for HA and mobile-actions.
 
-Trains the reference configuration per dataset (HA-Requests under s3's
-protocol, mobile-actions under s2's, stock model, muon 3e-3) and then runs
-eval-side instruments on it:
-
-- waterfall:  every positive eval sample lands in exactly one failure
-  class — false abstain, ill-formed, wrong name, right-name-wrong-values
-  with the missing values all copyable (their text appears in the prompt)
-  or some derived (dates, arithmetic — not in the prompt), or exact.
-- span bpb:   teacher-forced loss over the reference text, per byte class
-  (prompt / syntax / function name / argument keys / copyable values /
-  derived values) — where the residual loss lives.
-- ladder:     the same eval set decoded under increasing oracles: free
-  (the s2/s3 protocol), grammar (canonical call structure forced, name
-  constrained to the tool surface via a byte trie, values free), gold
-  name (>> name( forced per call, rest of the line free), gold structure
-  (everything forced except value contents). Deltas between rungs price
-  formatting, selection, and value generation separately; grammar vs
-  free is the constraint-tax measurement.
-- copy probe: eval samples whose value is copyable get that literal
-  replaced by an unseen random one in prompt and reference; gold-structure
-  decoding then measures pure copying of never-trained literals, by
-  literal position and length (the induction question).
-- calibration: confidence AUROC (correct vs incorrect exact match) on the
-  free rung, beside the existing ECE.
-
-The 4x-budget arm (steps 8000) excludes simple under-training. Hole
-decoding ends when the model emits the template's next delimiter byte, so
-a value containing its own closing quote is scored as truncated — a known
-ceiling, irrelevant at these surfaces (no reference value contains one).
-
-The training node declares `resources={"gpus": 1}`; the engine must know
-the card is there or it trains on the CPU. `.fluksio/env` carries
-`FLOW_GPUS=1` for this checkout; elsewhere `fluksio serve --gpus 1`.
-
-    uv run fluksio sync dev/s7_bottleneck
-    uv run fluksio sweep s7_bottleneck --param corpus=ha,mobile --param seed=0,1,2
-    uv run fluksio sweep s7_bottleneck --param corpus=ha,mobile --param steps=8000 --param seed=0
-
-Self-check (template decode, span labels, waterfall classes, trie):
-`uv run python dev/s7_bottleneck/study.py`
+Measure failure categories, loss by byte class, oracle decoding, copying
+of unseen values, and confidence AUROC. See README.md for the protocol
+and reproduction commands.
 """
 
 import itertools
@@ -71,29 +34,23 @@ HOLE_CAP = 64  # longest generated value/argument-list piece per hole
 
 
 def wordform(value) -> str:
-    """The prompt-side surface of a value: HA device slugs
-    (`light.kitchen_lamp`) appear in prompts as their entity words
-    (`kitchen lamp`); everything else is its own surface."""
+    """Convert a value to prompt words, e.g. light.kitchen_lamp to kitchen lamp."""
     return str(value).split(".")[-1].replace("_", " ").strip().lower()
 
 
 def copyable(value, prompt: str) -> bool:
-    """A value is copyable when its text — verbatim or as its word form —
-    appears in the prompt (case-insensitive): the model retrieves it,
-    at most re-slugging. Anything else it must derive."""
+    """Check whether a value or its word form appears in the prompt, ignoring case."""
     low = prompt.lower()
     return str(value).strip().lower() in low or wordform(value) in low
 
 
 def own_lines(generated: str) -> str:
-    """The model's continuation up to its first empty line -- past that
-    it is hallucinating the next training sample, not answering."""
+    """Keep the generated continuation through its first blank line."""
     return "\n".join(itertools.takewhile(bool, generated.split("\n")))
 
 
 def call_parts(name: str, args: dict, prompt: str) -> list[tuple[str, str]]:
-    """One rendered call line as (text, byte-class) pieces; concatenated
-    they reproduce render_call exactly (pinned by the self-check)."""
+    """Split a rendered call into (text, byte-class) pieces matching `render_call`."""
     parts = [(">> ", "syntax"), (name, "name"), ("(", "syntax")]
     for j, (k, v) in enumerate(sorted(args.items())):
         if j:
@@ -108,7 +65,7 @@ def call_parts(name: str, args: dict, prompt: str) -> list[tuple[str, str]]:
 
 
 def waterfall(predictions: list[str], samples: list) -> dict:
-    """Sample counts per failure class, plus argument-item counts."""
+    """Count samples by failure class and missing arguments by copyability."""
     counts = dict.fromkeys(
         [
             "exact",
@@ -155,13 +112,13 @@ def waterfall(predictions: list[str], samples: list) -> dict:
 
 @nnx.jit
 def _byte_nats(model: Wren, tokens: jax.Array) -> jax.Array:
-    """(batch, seq-1) per-byte cross-entropy: nats of tokens[:, 1:]."""
+    """Return per-byte cross-entropy in nats for tokens[:, 1:], shape (batch, seq-1)."""
     logits = model(tokens)[:, :-1]
     return optax.softmax_cross_entropy_with_integer_labels(logits, tokens[:, 1:])
 
 
 def span_bpb(model: Wren, samples: list, batch_size: int = 16) -> dict:
-    """Mean bits/byte per byte class over the reference texts."""
+    """Return mean bits/byte for each byte class in the reference text."""
     texts, labels = [], []
     for prompt, calls in samples:
         parts = [(prompt, "prompt")]
@@ -195,8 +152,7 @@ def span_bpb(model: Wren, samples: list, batch_size: int = 16) -> dict:
 
 
 def _trie_allowed(names: list[bytes], prefix: bytes, delim: int) -> list[int]:
-    """Bytes that extend `prefix` toward some name; the delimiter once the
-    prefix is a complete name."""
+    """Return bytes extending a name prefix, or the delimiter for a complete name."""
     allowed = {
         n[len(prefix)] for n in names if len(n) > len(prefix) and n.startswith(prefix)
     }
@@ -211,13 +167,11 @@ def template_decode(
     trie_names: list[str] | None = None,
     gen_batch: int = 64,
 ) -> list[list[list[int]]]:
-    """Decode each template — segments alternating forced byte lists and
-    holes ({"cap": int, "trie": bool}) — and return the per-sample hole
-    outputs. Forced bytes are teacher-forced through the KV cache; in a
-    hole the model's argmax continues until it emits the next segment's
-    first byte (the delimiter) or the cap is reached. Templates start and
-    end with forced segments; a first segment longer than the context
-    budget loses its head, as in generate_batch.
+    """Decode templates alternating forced byte lists and holes.
+
+    Holes specify `cap` and `trie`; decode greedily until the next forced byte
+    or the cap. Templates start and end with forced segments. Truncate an
+    overlong initial segment to fit the context. Return hole outputs per sample.
     """
     names = [n.encode() for n in trie_names or []]
 
@@ -298,12 +252,11 @@ def template_decode(
 
 
 def rung_templates(samples: list, rung: str) -> tuple[list[list], list[list[str]]]:
-    """(templates, per-hole labels) for one oracle rung.
+    """Return templates and hole labels for an oracle rung.
 
-    gold_structure: holes are value contents (string values between their
-    forced quotes; other literals whole). grammar: additionally the name
-    is a trie hole. gold_name: one hole per call covering everything after
-    `>> name(` to the end of the line.
+    `gold_structure` leaves value contents free; `grammar` also leaves the
+    name as a trie-constrained hole. `gold_name` leaves one hole per call
+    from after `>> name(` to the line's end.
     """
     templates, labels = [], []
     for prompt, calls in samples:
@@ -352,7 +305,7 @@ def rung_templates(samples: list, rung: str) -> tuple[list[list], list[list[str]
 
 
 def render_from_holes(template: list, holes: list[list[int]]) -> str:
-    """The decoded text (prompt included) with hole outputs spliced in."""
+    """Insert decoded hole outputs into the template, including the prompt."""
     out, h = [], iter(holes)
     for seg in template:
         out += seg if isinstance(seg, list) else next(h, [])
@@ -360,8 +313,7 @@ def render_from_holes(template: list, holes: list[list[int]]) -> str:
 
 
 def hole_expected(samples: list, rung: str) -> list[list[str]]:
-    """Per sample, the reference content of each hole, aligned with
-    rung_templates' hole order (gold_structure/grammar value holes only)."""
+    """Return reference values in template hole order for gold_structure or grammar."""
     expected = []
     for prompt, calls in samples:
         exp = []
@@ -376,7 +328,7 @@ def hole_expected(samples: list, rung: str) -> list[list[str]]:
 
 
 def auroc(scores: list[float], labels: list[bool]) -> float | None:
-    """Rank-based AUROC of scores for the positive labels."""
+    """Compute rank-based AUROC from scores and positive labels."""
     pos = [s for s, y in zip(scores, labels) if y]
     neg = [s for s, y in zip(scores, labels) if not y]
     if not pos or not neg:

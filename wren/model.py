@@ -1,16 +1,6 @@
-"""Wren: an attention-only transformer (a "Simple Attention Network").
+"""Attention-only byte decoder with QK normalization and rotary positions.
 
-A standard transformer block is attention followed by a feed-forward MLP,
-and the MLP holds ~2/3 of the parameters. Following
-https://arxiv.org/abs/2607.18363 we drop the MLPs entirely and spend the
-saved parameters on *more attention layers* instead. The paper shows this
-costs almost nothing in loss (0.006 nats at matched parameter count),
-provided queries and keys are normalized (QK-norm) -- that normalization,
-not the MLPs, is what keeps deep attention-only stacks trainable.
-
-The known weakness of attention-only models is recalling facts stored in
-the weights; their strength is answers grounded in the prompt. Wren gets
-its knowledge via RAG/context, so we lean into that strength.
+Blocks omit feed-forward layers; the output head shares the embedding matrix.
 """
 
 import pathlib
@@ -34,14 +24,9 @@ class Config:
 
 
 def rope(x: jax.Array, offset: jax.Array | int = 0) -> jax.Array:
-    """Rotary position embedding (RoPE), applied to queries and keys.
+    """Apply rotary positions to (i, i+half) feature pairs in queries or keys.
 
-    Rotates each (i, i+half) feature pair by an angle proportional to the
-    token's position, at a different frequency per pair. A dot product of
-    two rotated vectors then depends only on their *relative* distance, so
-    the model needs no learned position table and positions generalize.
-    `offset` shifts the positions -- decoding one token at position p passes
-    a length-1 sequence with offset=p.
+    `offset` sets the first token's position; pass offset=p when decoding at p.
     """
     _, seq, _, head_dim = x.shape  # (batch, seq, heads, head_dim)
     half = head_dim // 2
@@ -54,8 +39,7 @@ def rope(x: jax.Array, offset: jax.Array | int = 0) -> jax.Array:
 
 
 class AttentionBlock(nnx.Module):
-    """Pre-norm causal self-attention with QK-norm. That's the whole block:
-    there is deliberately no feed-forward network after it."""
+    """Pre-norm causal self-attention with QK normalization and no feed-forward layer."""
 
     def __init__(self, cfg: Config, rngs: nnx.Rngs):
         self.n_heads = cfg.n_heads
@@ -92,9 +76,7 @@ class AttentionBlock(nnx.Module):
     def prefill(
         self, x: jax.Array, k_cache: jax.Array, v_cache: jax.Array
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        """__call__ plus cache filling: the same attention over the whole
-        prompt in one pass, with the roped keys/values written to slots
-        0..seq-1 — the batched equivalent of `decode` over those positions."""
+        """Process the prompt and fill key/value cache slots 0 through seq-1."""
         batch, seq, dim = x.shape
         h = self.norm(x)
         q, k, v = jnp.split(self.wqkv(h), 3, axis=-1)
@@ -117,12 +99,10 @@ class AttentionBlock(nnx.Module):
     def decode(
         self, x: jax.Array, k_cache: jax.Array, v_cache: jax.Array, pos: jax.Array
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        """One token at position `pos`, attending over the cached keys/values.
+        """Decode one token at `pos` using and updating the key/value caches.
 
-        The full __call__ recomputes every pairwise score (O(seq^2)); during
-        generation only the new token's row changes, so caching k/v makes a
-        step O(seq). x is (batch, 1, dim); caches are (batch, context,
-        heads, head_dim) and come back updated at `pos`.
+        `x` has shape (batch, 1, dim); caches have shape
+        (batch, context, heads, head_dim).
         """
         batch, _, dim = x.shape
         h = self.norm(x)
@@ -145,7 +125,7 @@ class AttentionBlock(nnx.Module):
 
 
 class Wren(nnx.Module):
-    """Byte-in, next-byte-logits-out decoder."""
+    """Decode byte tokens into next-byte logits."""
 
     def __init__(self, cfg: Config, rngs: nnx.Rngs):
         self.cfg = cfg
@@ -154,7 +134,7 @@ class Wren(nnx.Module):
         self.norm = nnx.RMSNorm(cfg.dim, rngs=rngs)
 
     def __call__(self, tokens: jax.Array) -> jax.Array:
-        """(batch, seq) int32 byte ids -> (batch, seq, vocab) logits."""
+        """Map int32 byte IDs (batch, seq) to logits (batch, seq, vocab)."""
         x = self.embed(tokens)
         for block in self.blocks:
             x = block(x)
@@ -166,7 +146,7 @@ class Wren(nnx.Module):
         return sum(p.size for p in jax.tree.leaves(nnx.state(self, nnx.Param)))
 
     def init_cache(self, batch: int) -> list[tuple[jax.Array, jax.Array]]:
-        """Empty per-layer (k, v) caches for `decode`."""
+        """Create empty key/value caches for each layer."""
         shape = (
             batch,
             self.cfg.context,
@@ -181,8 +161,7 @@ class Wren(nnx.Module):
         caches: list[tuple[jax.Array, jax.Array]],
         pos: jax.Array,
     ) -> tuple[jax.Array, list[tuple[jax.Array, jax.Array]]]:
-        """(batch, 1) tokens at position `pos` -> (batch, vocab) logits,
-        with the caches advanced."""
+        """Decode tokens (batch, 1) at `pos`, returning logits (batch, vocab) and caches."""
         x = self.embed(tokens)
         updated = []
         for block, (k, v) in zip(self.blocks, caches):
@@ -193,8 +172,7 @@ class Wren(nnx.Module):
     def prefill(
         self, tokens: jax.Array, caches: list[tuple[jax.Array, jax.Array]]
     ) -> list[tuple[jax.Array, jax.Array]]:
-        """Fill the caches for (batch, seq) prompt tokens in one batched
-        pass instead of seq sequential `decode` steps."""
+        """Process prompt tokens (batch, seq) and fill caches in one pass."""
         x = self.embed(tokens)
         updated = []
         for block, (k, v) in zip(self.blocks, caches):
@@ -210,9 +188,10 @@ def generate(
     temperature: float = 1.0,
     seed: int = 0,
 ) -> list[int]:
-    """Sample n_new bytes autoregressively after the prompt, through the
-    same prefill + compiled-loop path as generate_batch. A prompt longer
-    than context - n_new loses its head."""
+    """Return the prompt followed by up to `n_new` generated bytes.
+
+    Generation uses only the prompt's last context - n_new tokens if needed.
+    """
     assert prompt, "empty prompt"
     outs, _ = generate_batch(model, [prompt], n_new, temperature=temperature, seed=seed)
     return list(prompt) + outs[0]
@@ -247,10 +226,11 @@ def _decode_loop(
     temperature: jax.Array,
     key: jax.Array,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
-    """The whole generation loop as one compiled program: no per-byte
-    dispatch, caches never leave the device. Temperature 0 decodes
-    greedily; above 0 it samples. Returns the filled buffer, per-row end
-    positions, summed log-probabilities and written byte counts."""
+    """Generate bytes in one compiled loop, keeping caches on the device.
+
+    Temperature 0 selects the most likely byte; positive values sample. Return
+    the buffer, row end positions, summed log probabilities, and byte counts.
+    """
     batch, width = buf.shape
     s = stop_arr.shape[0]
 
@@ -304,19 +284,11 @@ def generate_batch(
     temperature: float = 0.0,
     seed: int = 0,
 ) -> tuple[list[list[int]], list[float]]:
-    """Decode continuations for many prompts in one pass — greedily by
-    default, sampled when temperature is above 0.
+    """Generate continuations for a batch of prompts, stopping at `stop`.
 
-    The prompts are prefilled in one batched forward (garbage cache slots
-    past a short row's prompt are rewritten by the loop before they are
-    ever attended), then a single compiled loop decodes from the first
-    position any row generates at. Prompts longer than context - n_new
-    lose their head. Returns the generated tokens per prompt, cut after
-    `stop` appears.
-
-    Also returns each sample's per-byte confidence: the geometric mean of
-    the probabilities of its generated bytes -- the raw material for
-    calibration analysis.
+    Temperature 0 selects the most likely byte; positive values sample. Prompts
+    are truncated to their last context - n_new tokens. Return continuation
+    tokens and each row's geometric mean of generated-byte probabilities.
     """
     cfg = model.cfg
     prompts = [p[-(cfg.context - n_new) :] for p in prompts]
@@ -351,7 +323,7 @@ WEIGHTS = pathlib.Path(__file__).parent / "weights.npz"
 
 
 def save(model: Wren, path: pathlib.Path = WEIGHTS) -> None:
-    """Write parameters plus the config needed to rebuild the model."""
+    """Save parameters and the configuration needed to rebuild the model."""
     leaves, _ = jax.tree_util.tree_flatten_with_path(nnx.state(model, nnx.Param))
     arrays = {jax.tree_util.keystr(k): np.asarray(v) for k, v in leaves}
     arrays |= {f"cfg:{k}": v for k, v in asdict(model.cfg).items()}
@@ -359,7 +331,7 @@ def save(model: Wren, path: pathlib.Path = WEIGHTS) -> None:
 
 
 def load(path: pathlib.Path = WEIGHTS) -> Wren:
-    """Rebuild the model saved at `path`."""
+    """Load the model and configuration saved at `path`."""
     npz = np.load(path)
     cfg = Config(**{k.removeprefix("cfg:"): int(npz[k]) for k in npz if "cfg:" in k})
     model = Wren(cfg, rngs=nnx.Rngs(0))

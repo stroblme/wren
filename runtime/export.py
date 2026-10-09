@@ -1,15 +1,9 @@
-"""Export Wren weights to the packed ternary format `wren.c` loads.
+"""Export weights to the ternary format read by Wren's NumPy and C runtimes.
 
-The attention kernels are ternarized exactly as the s8 QAT arms train
-them (BitNet b1.58 absmean, arXiv:2402.17764): {-1, 0, +1} times one
-per-tensor scale, packed 4 weights per byte on disk. Embedding and norm
-scales stay fp32 (~3% of parameters). Kernels are stored transposed
-(out, in) row-major so the C dot products walk memory linearly.
+Attention kernels use {-1, 0, +1} times a scale per tensor, packed four
+weights per byte in (out, in) row order. Embeddings and norms remain fp32.
 
     uv run python runtime/export.py runtime/weights-qat.npz wren/wren.bin
-
-The reader lives in the package: wren/runtime.py is the format's
-specification and the numpy runtime the library ships.
 """
 
 import struct
@@ -21,13 +15,13 @@ from wren.runtime import MAGIC, VERSION
 
 
 def ternary(w: np.ndarray) -> tuple[np.ndarray, float]:
-    """(int8 values in {-1,0,1}, scale) — the b1.58 absmean quantizer."""
+    """Return int8 ternary values and their mean-absolute-weight scale."""
     scale = float(np.mean(np.abs(w))) + 1e-12
     return np.clip(np.round(w / scale), -1, 1).astype(np.int8), scale
 
 
 def _pack2(q: np.ndarray) -> bytes:
-    """{-1,0,1} int8 -> 2 bits each (value+1), 4 per byte."""
+    """Pack {-1, 0, 1} as 2-bit (value+1) codes, four weights per byte."""
     flat = (q.reshape(-1) + 1).astype(np.uint8)
     flat = np.pad(flat, (0, -len(flat) % 4))
     return (

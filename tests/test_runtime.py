@@ -1,7 +1,4 @@
-"""The packed runtime's parity pins: the numpy runtime (the format spec,
-wren/runtime.py) matches the JAX model with ternarized kernels, the C
-binary matches the numpy runtime byte for byte, and the shipped model
-still answers what the original per-byte reference answered."""
+"""Check NumPy/JAX parity, matching C output, and shipped-model responses."""
 
 import pathlib
 import shutil
@@ -23,7 +20,7 @@ import export  # ty: ignore[unresolved-import]
 
 @pytest.fixture(scope="module")
 def packed(tmp_path_factory):
-    """A tiny random model, saved, exported, and loaded back."""
+    """Create a small random model, export it, and load its packed weights."""
     tmp = tmp_path_factory.mktemp("runtime")
     cfg = Config(dim=64, n_layers=2, n_heads=2, context=96)
     model = Wren(cfg, rngs=nnx.Rngs(0))

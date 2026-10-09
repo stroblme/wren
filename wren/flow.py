@@ -1,15 +1,7 @@
-"""The training run, declared as a fluksio flow.
+"""Fluksio training flow used by `wren --train`.
 
-`wren --train` submits this flow to the project-local engine
-(`uv run fluksio serve`), which records what it ran with, the loss curve it
-reported, and the weights it produced. The node is a thin wrapper around
-`wren.train.train`, so the library itself stays fluksio-free and a plain
-`train(model, text)` keeps working.
-
-Every knob is a flow *input* rather than a node setting, because
-`fluksio sweep --param` varies inputs, and its default comes
-from `wren.train.DEFAULTS` -- the model shape included, so a run records the
-model it trained instead of whatever `Config` happened to say on the worker.
+Flow inputs use `wren.train.DEFAULTS` and support parameter sweeps. The
+engine records parameters, loss, and weights; training uses `wren.train`.
 """
 
 import pathlib
@@ -54,7 +46,7 @@ def fit(
     seq_len: int,
     lr: float,
 ) -> dict:
-    """Train from scratch on `corpus` (a path; empty means the demo corpus)."""
+    """Train from a corpus path, or the built-in corpus if the path is empty."""
     from flax import nnx
 
     from wren.dataset import home_corpus

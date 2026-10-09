@@ -1,12 +1,7 @@
-"""Command line entry point.
+"""Command line interface for inference and training.
 
-`wren <prompt>` (or piped stdin) runs inference against the shipped
-weights; `wren --train` retrains them from a corpus and overwrites the
-weights file inside the package, which is what the wheel ships.
-
-Training goes through fluksio (wren/flow.py): the parameters it ran with,
-the loss curve it reported and the weights it produced are recorded by the
-engine (`uv run fluksio serve`) instead of scrolling past in a terminal.
+`wren <prompt>` or piped input runs the shipped weights. `wren --train`
+runs the Fluksio training flow and overwrites the package's weights file.
 """
 
 import argparse
@@ -71,7 +66,7 @@ def main() -> None:
 
 
 def train_run(args: argparse.Namespace) -> None:
-    """Run the training flow on the engine, and keep the weights it made."""
+    """Run the training flow and save its weights in the package."""
     try:
         from fluksio.sdk import SyncError
         from fluksio.sdk.cli import discover
@@ -116,13 +111,7 @@ def train_run(args: argparse.Namespace) -> None:
 
 
 def follow(client: Any, handle: Any, poll: float = 2.0) -> None:
-    """Wait for the run, reporting where its loss has got to as it goes.
-
-    The latest reading per poll rather than every one of them: the node
-    reports a loss per step, and the whole curve is on the engine either way.
-    The status is read before the numbers, so the last reading is never the
-    one that gets missed.
-    """
+    """Wait for the run, logging the latest loss after each status poll."""
     while True:
         done = handle.refresh().done
         points = client.metrics(handle.id)
@@ -134,5 +123,5 @@ def follow(client: Any, handle: Any, poll: float = 2.0) -> None:
 
 
 def log(message: str) -> None:
-    """Progress goes to stderr so stdout stays pipeable model output."""
+    """Write progress to stderr so stdout contains only model output."""
     print(message, file=sys.stderr)

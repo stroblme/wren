@@ -1,10 +1,8 @@
-"""Tool-call evaluation: ordered strict exact match and its companions.
+"""Evaluate tool calls by ordered exact match and diagnostic metrics.
 
-Needle's protocol, adopted as ours: a sample passes only if the function
-names, the call order, and every argument value match the reference. The
-companion metrics diagnose *why* exact match fails -- well-formedness (does
-the output parse at all), name accuracy (right functions, wrong arguments),
-and argument micro-F1 (partial credit on arguments).
+Exact match requires identical function names, call order, and argument
+values. Well-formedness, name accuracy, and argument F1 measure partial
+success.
 """
 
 import ast
@@ -14,13 +12,10 @@ Call = tuple[str, dict]
 
 
 def parse_calls(text: str) -> list[Call] | None:
-    """Extract `>> name(key='value', ...)` lines into (name, args) pairs.
-    Names may be dotted (`lights.on`, Home Assistant's `cover.close`).
+    """Parse `>> name(key='value', ...)` lines into (name, args) pairs.
 
-    Returns None when any `>> ` line fails to parse as a plain call with
-    literal keyword arguments -- the sample is then not well-formed.
-    Lines without the marker are ignored (the model may ramble around its
-    calls; only the calls are scored).
+    Names may be dotted. Return None if any marked line is not a plain call
+    with literal keyword arguments; ignore unmarked lines.
     """
     calls = []
     for line in text.splitlines():
@@ -47,7 +42,7 @@ def parse_calls(text: str) -> list[Call] | None:
 
 
 def score(predictions: list[str], references: list[list[Call]]) -> dict[str, float]:
-    """Corpus metrics for generated texts against reference call lists."""
+    """Score generated texts against reference call lists."""
     well_formed = exact = names = 0
     tp = fp = fn = 0
     for text, ref in zip(predictions, references, strict=True):
@@ -82,9 +77,10 @@ def score(predictions: list[str], references: list[list[Call]]) -> dict[str, flo
 
 
 def hallucination_rate(predictions: list[str], surface: dict[str, list[str]]) -> float:
-    """Fraction of call-emitting predictions that name a function, or pass
-    an argument, the tool surface does not define. Malformed and abstaining
-    predictions are excluded -- other metrics count those."""
+    """Return the fraction of call predictions using unknown functions or arguments.
+
+    Exclude malformed predictions and predictions without calls.
+    """
     seen = invented = 0
     for text in predictions:
         pred = parse_calls(text)
@@ -98,17 +94,17 @@ def hallucination_rate(predictions: list[str], surface: dict[str, list[str]]) ->
 
 
 def abstain_rate(predictions: list[str]) -> float:
-    """Fraction of predictions that correctly emit no call at all --
-    irrelevance accuracy when computed over no-call references."""
+    """Return the fraction emitting no calls; use on negatives for irrelevance accuracy."""
     return sum(parse_calls(t) == [] for t in predictions) / len(predictions)
 
 
 def calibration_error(
     confidences: list[float], corrects: list[bool], bins: int = 10
 ) -> float:
-    """Expected calibration error: bin samples by confidence, average
-    |accuracy - mean confidence| over bins weighted by bin size. 0 means
-    the model's confidence predicts its own accuracy perfectly."""
+    """Return expected calibration error over confidence bins.
+
+    Weight each bin's |accuracy - mean confidence| by its sample count.
+    """
     ece = 0.0
     for b in range(bins):
         lo, hi = b / bins, (b + 1) / bins

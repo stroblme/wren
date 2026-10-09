@@ -1,8 +1,7 @@
-"""S3 deliverable figure: loss at the fixed step budget per optimizer.
+"""Plot optimizer loss at a fixed budget from Fluksio runs.
 
-Reads the engine's run table (`fluksio export runs`) and writes
-figures/s3-optimizer-bakeoff.svg. Left: the LR sweep (seed 0, depth 8).
-Right: seed spread at each winner, with depth 16 as open markers.
+Write `figures/s3-optimizer-bakeoff.svg` with the learning-rate sweep,
+seed variation, and depth-16 results.
 """
 
 import csv

@@ -1,14 +1,7 @@
-"""S7 deliverable figure: the failure waterfall and where the oracle points.
+"""Plot failure categories, oracle results, copying accuracy, and loss by byte class.
 
-Reads the engine's run table and writes figures/s7-bottleneck.svg. Panel 1:
-the waterfall — eval samples per failure class, per corpus. Panel 2: the
-oracle ladder — exact match under free, grammar-constrained, gold-name,
-and gold-structure decoding. Panel 3: value-hole accuracy under gold
-structure for trained values vs the copy probe's unseen literals — the
-memorization-vs-copying contrast. Panel 4: span-resolved bits/byte.
-
-Data comes from `fluksio export runs`; `--local` boots the engine in this
-process, so plotting needs no server.
+Read Fluksio runs and write `figures/s7-bottleneck.svg`. Export with
+`--local` to read runs without a running server.
 """
 
 import csv
@@ -38,7 +31,7 @@ SPANS = ["prompt", "syntax", "name", "key", "value_copy", "value_der"]
 
 
 def rows() -> list[dict]:
-    """One dict per finished run, deduplicated by (corpus, seed, steps)."""
+    """Return completed runs, keeping one per (corpus, seed, steps)."""
     with tempfile.TemporaryDirectory() as directory:
         out = Path(directory) / "runs.csv"
         subprocess.run(

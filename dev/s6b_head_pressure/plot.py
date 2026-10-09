@@ -1,14 +1,8 @@
-"""S6b deliverable figure: the shared−banded gap as heads get narrow.
+"""Plot shared and banded results by head count, with seed variation.
 
-Reads the engine's run table and writes figures/s6b-head-pressure.svg.
-Panels 1–3: held-out bits/byte at windows 128 and 256 and train loss at
-budget, each vs head count, shared vs banded with seed spread — the gap
-between the arms is the result. Panel 4: per-head entropy at 32 heads,
-where banding should show a scale ladder if specialization survives
-narrow heads.
-
-Data comes from `fluksio export runs`; `--local` boots the engine in this
-process, so plotting needs no server.
+Read Fluksio runs and write `figures/s6b-head-pressure.svg`, including
+per-head entropy at 32 heads. Export with `--local` to read runs without
+a running server.
 """
 
 import csv
@@ -32,8 +26,7 @@ METRICS = ("head_profiles", "final_loss", "bpb_128", "bpb_192", "bpb_256")
 
 
 def rows() -> list[dict]:
-    """One dict per finished non-smoke run, deduplicated by combination
-    (newest wins), straight from `export runs`."""
+    """Return completed non-smoke runs, keeping the newest run per combination."""
     with tempfile.TemporaryDirectory() as directory:
         out = Path(directory) / "runs.csv"
         subprocess.run(

@@ -1,22 +1,7 @@
-"""S4 addendum — the redundancy probe.
+"""Probe frequency redundancy in saved fixed and learned s4 models.
 
-Prediction from the aliasing analysis: a frequency in
-the under-trained band (period > train window) is in-distribution
-redundant — the window-128 loss barely moves along its coordinate slice —
-while the window-256 loss moves strongly along the same slice; an in-band
-frequency is steep in both. If it holds, in-distribution-redundant
-spectral directions are exactly the length-generalization-fragile ones,
-and the training window plays the redundancy-fixing role the encoding
-plays in a QFM: growing the window from 128 to 256 halves the aliasing
-threshold 2*pi/L and shrinks the redundant band.
-
-Pure analysis over the weights artifacts of finished s4 runs — no
-training. Sweeps slots 8 (in-band, omega 0.1) and 18 (under-trained,
-omega ~0.0056) of the fixed and learned@3e-3 seed-0 models over
-omega in [1e-3, pi), evaluating held-out loss at windows 128 and 256.
-Writes figures/s4-redundancy-probe.svg and prints the span table.
-
-    uv run python dev/s4_learnable_freqs/redundancy_probe.py
+Sweep slots 8 and 18 over [1e-3, pi), measuring held-out loss at windows
+128 and 256. Write `figures/s4-redundancy-probe.svg` and print loss spans.
 """
 
 import csv
@@ -36,7 +21,7 @@ INK, MUTED = "#0b0b0b", "#52514e"
 
 
 def fetch_weights(directory: Path) -> dict[str, Path]:
-    """The weights artifacts of the fixed and learned@3e-3 seed-0 runs."""
+    """Fetch weights from the fixed and learned@3e-3 seed-0 runs."""
     runs = directory / "runs.csv"
     subprocess.run(
         [
@@ -101,7 +86,7 @@ def main() -> None:
     from wren.model import Config
 
     def load_spectral(path: Path) -> SpectralWren:
-        """wren.model.load for the study's model (extra log_freqs leaf)."""
+        """Load SpectralWren weights, including the extra `log_freqs` parameter."""
         npz = np.load(path)
         cfg = Config(
             **{k.removeprefix("cfg:"): int(npz[k]) for k in npz if "cfg:" in k}

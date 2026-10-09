@@ -93,7 +93,7 @@ def test_generate_batch_confidence():
 
 
 def test_flow_takes_every_knob():
-    """The node is what has to be edited when a knob is added; nothing else."""
+    """Check that flow inputs expose every training parameter."""
     import inspect
 
     from wren import flow
