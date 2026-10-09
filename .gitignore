@@ -1,8 +1,23 @@
+AGENTS.md
+
+# Local research notes
+docs/DECISIONS.md
+docs/NOTEPAD.md
+docs/RESEARCH.md
+docs/ROADMAP.md
+docs/qfm-relation.md
+
 # fluksio local engine data
 .fluksio/
 
 # downloaded datasets
 data/
+
+# Study figures, reproducible from each study's plot script
+dev/*/figures/
+
+# C runtime build output
+/wren-rt
 
 ### Python ###
 # Byte-compiled / optimized / DLL files

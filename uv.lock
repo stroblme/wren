@@ -3649,9 +3649,14 @@ wheels = [
 
 [[package]]
 name = "wren"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
+    { name = "numpy" },
+]
+
+[package.optional-dependencies]
+train = [
     { name = "flax" },
     { name = "jax" },
     { name = "optax" },
@@ -3671,14 +3676,17 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
+    { name = "wren", extra = ["train"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "flax", specifier = ">=0.12.9" },
-    { name = "jax", specifier = ">=0.11.1" },
-    { name = "optax", specifier = ">=0.2.8" },
+    { name = "flax", marker = "extra == 'train'", specifier = ">=0.12.9" },
+    { name = "jax", marker = "extra == 'train'", specifier = ">=0.11.1" },
+    { name = "numpy", specifier = ">=2" },
+    { name = "optax", marker = "extra == 'train'", specifier = ">=0.2.8" },
 ]
+provides-extras = ["train"]
 
 [package.metadata.requires-dev]
 cuda12 = [{ name = "jax", extras = ["cuda12"], specifier = ">=0.11.1" }]
@@ -3690,6 +3698,7 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.16.5" },
     { name = "ty", specifier = ">=0.0.75" },
+    { name = "wren", extras = ["train"] },
 ]
 
 [[package]]

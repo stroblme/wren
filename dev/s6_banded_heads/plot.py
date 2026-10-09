@@ -1,6 +1,6 @@
 """S6 deliverable figure: length generalization, head specialization, drift.
 
-Reads the engine's run table and writes docs/s6-banded-heads.svg. Panel 1:
+Reads the engine's run table and writes figures/s6-banded-heads.svg. Panel 1:
 held-out bits/byte at eval windows {128, 192, 256} per arm. Panel 2:
 per-head attention-distance profiles at window 256 — the banded heads as
 lines against the shared arm's head spread. Panel 3: per-head normalized
@@ -194,7 +194,9 @@ def main() -> None:
         ha="left",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93))
-    fig.savefig("docs/s6-banded-heads.svg", facecolor=fig.get_facecolor())
+    out = Path(__file__).parent / "figures" / "s6-banded-heads.svg"
+    out.parent.mkdir(exist_ok=True)
+    fig.savefig(out, facecolor=fig.get_facecolor())
 
 
 if __name__ == "__main__":

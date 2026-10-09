@@ -1,4 +1,4 @@
-"""S4 — learnable RoPE frequencies (ROADMAP.md).
+"""S4 — learnable RoPE frequencies.
 
 Three arms over the same training protocol (Home-Assistant-Requests train
 split, seq 128, fixed step budget), differing only in the rope spectrum:
@@ -190,7 +190,7 @@ def probe_curve(
     n_windows: int = 64,
 ) -> tuple[list[float], list[float]]:
     """Loss as a function of frequency `idx` over one full period, the rest
-    frozen — the Rotosolve precondition probe (ROADMAP s4c). Restores the
+    frozen — the Rotosolve precondition probe (arm s4c). Restores the
     model's spectrum afterwards."""
     xs, ys = held_windows(held, seq_len)
     x, y = xs[:n_windows], ys[:n_windows]

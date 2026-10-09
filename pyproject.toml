@@ -1,13 +1,18 @@
 [project]
 name = "wren"
-version = "0.1.0"
+version = "0.2.0"
 description = "A tiny attention-only byte-level model for grounded tool calls"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Melvin Strobl", email = "stroblme@posteo.de" }]
-dependencies = [
+# Inference (`from wren import act`) runs on the packed model in numpy;
+# JAX is for training and the fp32 CLI only.
+dependencies = ["numpy>=2"]
+
+[project.optional-dependencies]
+train = [
     "flax>=0.12.9",
     "jax>=0.11.1",
     "optax>=0.2.8",
@@ -20,6 +25,7 @@ wren = "wren.cli:main"
 cuda12 = ["jax[cuda12]>=0.11.1"]
 cuda13 = ["jax[cuda13]>=0.11.1"]
 dev = [
+    "wren[train]",
     "pytest>=9.1.1",
     "ruff>=0.16.5",
     "ty>=0.0.75",
@@ -38,8 +44,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["wren"]
-# Trained weights live inside the package so the wheel ships a usable model.
-artifacts = ["wren/weights.npz"]
+# Trained weights live inside the package so the wheel ships a usable model:
+# the fp32 JAX weights and the packed ternary model the library runs.
+artifacts = ["wren/weights.npz", "wren/wren.bin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

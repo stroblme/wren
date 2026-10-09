@@ -1,4 +1,4 @@
-"""S6 — spectral-aware attention heads (ROADMAP.md, go per the s5 verdict).
+"""S6 — spectral-aware attention heads (go per the s5 verdict).
 
 Three arms over the s4 protocol (Home-Assistant-Requests, seq 128, 2000
 steps, muon 3e-3), differing only in how the rope spectrum is laid out
@@ -324,7 +324,7 @@ def study(
     # A bare `uv sync` prunes the gpu extra and jax falls back to the CPU
     # with the card declared and granted; a 2-minute run becomes 31.
     if jax.default_backend() == "cpu":
-        raise RuntimeError("jax sees no card: `uv sync --extra gpu`, restart engine")
+        raise RuntimeError("jax sees no card: `uv sync --group cuda12`, restart engine")
 
     cfg = Config(context=256)  # must hold the longest eval window
     half = cfg.dim // cfg.n_heads // 2

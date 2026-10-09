@@ -5,7 +5,7 @@ random ids, current state) paired with commands whose correct tool calls
 follow deterministic rules from that state. The state travels in the
 prompt, so argument values must be *copied* out of it -- and eval houses
 use device ids never seen in training, which makes exact match a test of
-retrieval rather than memorization (the s7 bottleneck, RESEARCH.md).
+retrieval rather than memorization (study s7, dev/s7_bottleneck).
 
 External datasets (downloaded on demand into data/, gitignored):
 - mobile-actions (Google, CC-BY-4.0): 7 phone functions, the one needle
@@ -21,9 +21,7 @@ import random
 import re
 import urllib.request
 
-ROOMS = ["living room", "kitchen", "bathroom", "bedroom", "office"]
-OUTSIDE = ["garden", "patio", "garage", "driveway", "balcony"]
-AREAS = ROOMS + OUTSIDE
+from wren.home import AREAS, ID_CHARS, OUTSIDE, ROOMS, Device, House, render_state
 
 # Each entry maps several phrasings (direct or indirect) of the same intent
 # to a single tool call, so the model sees "turn the lights on" and "it's
@@ -288,7 +286,6 @@ _STATES = {
     "shutter": ["up", "down"],
     "water": ["on", "off"],
 }
-_ID_CHARS = "abcdefghijkmnpqrstuvwxyz23456789"  # no 0/O/1/l confusables
 _DELAYS = [5, 10, 15, 20, 30, 45, 60, 90]
 
 
@@ -301,15 +298,19 @@ def _house(rng: random.Random, avoid: set[str]) -> dict:
     used = set(avoid)
 
     def dev(kind: str) -> tuple[str, str]:
-        while (i := kind[0] + "".join(rng.choices(_ID_CHARS, k=4))) in used:
+        while (i := kind[0] + "".join(rng.choices(ID_CHARS, k=4))) in used:
             pass
         used.add(i)
-        state = f"{rng.randint(17, 23)}C" if kind == "heat" else rng.choice(_STATES[kind])
+        state = (
+            f"{rng.randint(17, 23)}C" if kind == "heat" else rng.choice(_STATES[kind])
+        )
         return i, state
 
     areas = {"living room": {k: dev(k) for k in ("light", "media", "heat")}}
     for room in rng.sample([r for r in ROOMS if r != "living room"], rng.randint(1, 3)):
-        kinds = ["light"] + [k for k in ("media", "heat", "shutter") if rng.random() < 0.4]
+        kinds = ["light"] + [
+            k for k in ("media", "heat", "shutter") if rng.random() < 0.4
+        ]
         areas[room] = {k: dev(k) for k in kinds}
     for spot in rng.sample(OUTSIDE, rng.randint(0, 2)):
         areas[spot] = {"light": dev("light"), "water": dev("water")}
@@ -327,17 +328,17 @@ def _house(rng: random.Random, avoid: set[str]) -> dict:
 def _render_state(house: dict, keep: list[str]) -> str:
     """The state block, pruned to `keep` — the retrieval step the deployed
     pipeline performs: only the areas relevant to the request (plus the
-    distractors the retriever would let through) reach the context."""
-    lines = [
-        f"{house['time']} out {house['out']}C {'dark' if house['dark'] else 'bright'}",
-        f"user {house['user']}",
-    ]
-    for area, devs in house["areas"].items():
-        if area in keep:
-            lines.append(
-                f"{area}: " + ", ".join(f"{k} {i} {s}" for k, (i, s) in devs.items())
-            )
-    return "\n".join(lines) + "\n"
+    distractors the retriever would let through) reach the context.
+    Rendered by the library's `render_state`, so inference reads the same
+    format."""
+    areas = {
+        area: [Device(kind, i, s) for kind, (i, s) in devs.items()]
+        for area, devs in house["areas"].items()
+    }
+    user = None if house["user"] == "away" else house["user"]
+    return render_state(
+        House(house["time"], house["out"], house["dark"], user, areas), keep
+    )
 
 
 def _keep(house: dict, rng: random.Random, *needed: str) -> list[str]:

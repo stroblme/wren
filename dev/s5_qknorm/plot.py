@@ -1,6 +1,6 @@
 """S5 deliverable figure: gradient variance, entropy, and the band story.
 
-Reads the engine's run table and writes docs/s5-qknorm.svg. Panel 1: the
+Reads the engine's run table and writes figures/s5-qknorm.svg. Panel 1: the
 barren-plateau-style curve, per-parameter gradient second moment at init vs
 depth, with a 1/depth guide. Panel 2: the same quantity resolved per layer.
 Panel 3: normalized attention entropy per layer, at init and after training.
@@ -227,7 +227,9 @@ def main() -> None:
         ha="left",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93))
-    fig.savefig("docs/s5-qknorm.svg", facecolor=fig.get_facecolor())
+    out = Path(__file__).parent / "figures" / "s5-qknorm.svg"
+    out.parent.mkdir(exist_ok=True)
+    fig.savefig(out, facecolor=fig.get_facecolor())
 
 
 if __name__ == "__main__":

@@ -315,7 +315,7 @@ def study(
     # A bare `uv sync` prunes the gpu extra and jax falls back to the CPU
     # with the card declared and granted; a 2-minute run becomes 31.
     if jax.default_backend() == "cpu":
-        raise RuntimeError("jax sees no card: `uv sync --extra gpu`, restart engine")
+        raise RuntimeError("jax sees no card: `uv sync --group cuda12`, restart engine")
 
     cfg = Config(context=256, n_heads=n_heads)  # context must hold window 256
     half = cfg.dim // cfg.n_heads // 2

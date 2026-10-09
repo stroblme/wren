@@ -14,7 +14,7 @@ and the attention. Two instruments:
   device's id — same format, wrong content), per (layer, head). The
   contrast isolates content matching from format attention.
 - slot decomposition: the pre-softmax logit at the peak copy edge
-  decomposes exactly over RoPE's 2D frequency pairs (qfm-relation.md §1):
+  decomposes exactly over RoPE's 2D frequency pairs:
   c_i = (qa·ka + qb·kb) cos(Δω_i) + (qa·kb − qb·ka) sin(Δω_i).
   The per-slot means over copy vs control edges say which bands do the
   matching. Both identities are asserted against the stock forward on
@@ -27,7 +27,7 @@ n_train so the eval split replays with genuinely unseen ids:
     JAX_PLATFORMS=cpu uv run python dev/s8b_copy_spectrum/probe.py \
         weights.npz --n-train 64000
 
-Writes docs/s8b-copy-spectrum.svg and prints the tables.
+Writes figures/s8b-copy-spectrum.svg and prints the tables.
 """
 
 import argparse
@@ -47,7 +47,9 @@ ID = re.compile(r"^[lmhsw][a-z2-9]{4}$")
 BANDS = [("byte", 2, 32), ("word", 32, 128), ("sample", 128, 1024), ("dc", 1024, 1e9)]
 
 
-def captured_forward(model: Wren, tokens: jnp.ndarray) -> tuple[list[dict], jnp.ndarray]:
+def captured_forward(
+    model: Wren, tokens: jnp.ndarray
+) -> tuple[list[dict], jnp.ndarray]:
     """The stock forward, keeping per layer: pre-RoPE q/k (post-QK-norm)
     and the attention matrix. Returns (records, logits); logits are
     asserted equal to model(tokens) on the first call."""
@@ -107,7 +109,11 @@ def main() -> None:
     parser.add_argument("weights", type=pathlib.Path)
     parser.add_argument("--n-train", type=int, default=64000)
     parser.add_argument("--n-samples", type=int, default=128)
-    parser.add_argument("--out", type=pathlib.Path, default="docs/s8b-copy-spectrum.svg")
+    parser.add_argument(
+        "--out",
+        type=pathlib.Path,
+        default=pathlib.Path(__file__).parent / "figures" / "s8b-copy-spectrum.svg",
+    )
     args = parser.parse_args()
 
     model = load(args.weights)
@@ -180,7 +186,8 @@ def main() -> None:
 
     # The copy heads: largest copy-over-control contrast.
     contrast = copy_mass - ctrl_mass
-    top = np.dstack(np.unravel_index(np.argsort(-contrast, axis=None), contrast.shape))[0][:3]
+    order = np.unravel_index(np.argsort(-contrast, axis=None), contrast.shape)
+    top = np.dstack(order)[0][:3]
     freqs = 1.0 / (10000.0 ** (np.arange(half) / half))
     periods = 2 * np.pi / freqs
     print("top copy heads and their matching bands (mean slot contribution):")
@@ -198,7 +205,9 @@ def main() -> None:
     import matplotlib.pyplot as plt
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
-    im = ax1.imshow(contrast, cmap="RdBu_r", vmin=-abs(contrast).max(), vmax=abs(contrast).max())
+    im = ax1.imshow(
+        contrast, cmap="RdBu_r", vmin=-abs(contrast).max(), vmax=abs(contrast).max()
+    )
     ax1.set_xlabel("head"), ax1.set_ylabel("layer")
     ax1.set_title("copy − control attention mass")
     fig.colorbar(im, ax=ax1)
@@ -207,10 +216,12 @@ def main() -> None:
     for _, lo, _hi in BANDS[1:]:
         ax2.axvline(lo, color="gray", lw=0.5, ls=":")
     ax2.set_xscale("log")
-    ax2.set_xlabel("RoPE period (bytes)"), ax2.set_ylabel("slot contribution, copy − control")
+    ax2.set_xlabel("RoPE period (bytes)")
+    ax2.set_ylabel("slot contribution, copy − control")
     ax2.set_title("match signal by spectral slot (top heads)")
     ax2.legend()
     fig.tight_layout()
+    args.out.parent.mkdir(exist_ok=True)
     fig.savefig(args.out)
     print(f"figure: {args.out}")
 

@@ -1,10 +1,10 @@
 # Wren architecture — attention-only byte-level decoder
-# render: d2 doc/architecture.d2 doc/architecture.svg
+# render: d2 docs/architecture.d2 docs/architecture.svg
 
 direction: down
 
 bytes: "UTF-8 bytes\n1 token = 1 byte, vocab 256"
-embed: "token embedding 256 × 128"
+embed: "token embedding 256 × 256"
 
 blocks: "attention-only block   × 8" {
   x: "x"
@@ -12,7 +12,7 @@ blocks: "attention-only block   × 8" {
   qkv: "linear → Q, K, V"
   qk: "QK-norm on Q, K\n(keeps deep stacks trainable)"
   rope: "RoPE on Q, K\n(relative positions)"
-  attn: "causal softmax attention\n4 heads × 32 dims"
+  attn: "causal softmax attention\n4 heads × 64 dims"
   wo: "output projection"
   add: "+"
   x -> norm -> qkv -> qk -> rope -> attn -> wo -> add

@@ -1,4 +1,4 @@
-"""S1 — baseline: AdamW on the home corpus (ROADMAP.md).
+"""S1 — baseline: AdamW on the home corpus.
 
 Declared as a fluksio flow: `uv run fluksio run s1_baseline --follow` with
 the project-local engine (`uv run fluksio serve`) running. The nodes stay
@@ -32,7 +32,9 @@ EVAL = [
 def corpus(copies: int = 40) -> str:
     from wren.dataset import home_corpus
 
-    return home_corpus(copies)
+    # ty: s1 ran on the template corpus `home_corpus(copies)`, replaced in
+    # 8764546 by the state-conditioned generator; run it at 8764546~1.
+    return home_corpus(copies)  # ty: ignore[too-many-positional-arguments]
 
 
 @node(

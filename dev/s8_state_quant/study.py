@@ -14,7 +14,7 @@ Two questions at once, on the generated home corpus (wren.dataset.home):
 
 `packed_mb` reports the theoretical shipped size at 2/8/32 bits per
 attention weight -- no packed runtime exists yet, by design (runtime
-work is deferred; DECISIONS.md).
+work is deferred).
 
 The training node declares `resources={"gpus": 1}`; the engine must know
 the card is there or it trains on the CPU. `.fluksio/env` carries
@@ -189,7 +189,9 @@ def study(
         raise RuntimeError("jax sees no card: `uv sync --group cuda12`, restart engine")
 
     proto = PROTOCOL[corpus]
-    model = quantize_(Wren(Config(context=proto["context"]), rngs=nnx.Rngs(seed)), quant)
+    model = quantize_(
+        Wren(Config(context=proto["context"]), rngs=nnx.Rngs(seed)), quant
+    )
     optimizer = nnx.Optimizer(model, muon(lr), wrt=nnx.Param)
     data = jnp.array(tokenizer.encode(train_text), dtype=jnp.int32)
     key = jax.random.PRNGKey(seed)

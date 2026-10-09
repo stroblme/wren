@@ -1,4 +1,4 @@
-"""S7 — bottleneck autopsy (ROADMAP.md): where do exact-match points die?
+"""S7 — bottleneck autopsy: where do exact-match points die?
 
 Trains the reference configuration per dataset (HA-Requests under s3's
 protocol, mobile-actions under s2's, stock model, muon 3e-3) and then runs
@@ -62,7 +62,7 @@ from wren.eval import calibration_error, parse_calls, score
 from wren.model import Config, Wren, _decode_step, generate_batch, save
 from wren.train import muon, sample_batch, train_step
 
-# The reference protocols (DECISIONS.md s2/s3 setups).
+# The reference protocols (the s2/s3 setups).
 PROTOCOL = {
     "ha": {"context": 384, "seq_len": 256, "n_new": 192},
     "mobile": {"context": 768, "seq_len": 512, "n_new": 192},
@@ -463,7 +463,7 @@ def study(
     if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
         raise RuntimeError("no card declared: `fluksio serve --gpus 1`")
     if jax.default_backend() == "cpu":
-        raise RuntimeError("jax sees no card: `uv sync --extra gpu`, restart engine")
+        raise RuntimeError("jax sees no card: `uv sync --group cuda12`, restart engine")
 
     proto = PROTOCOL[corpus]
     model = Wren(Config(context=proto["context"]), rngs=nnx.Rngs(seed))

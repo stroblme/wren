@@ -214,9 +214,7 @@ def generate(
     same prefill + compiled-loop path as generate_batch. A prompt longer
     than context - n_new loses its head."""
     assert prompt, "empty prompt"
-    outs, _ = generate_batch(
-        model, [prompt], n_new, temperature=temperature, seed=seed
-    )
+    outs, _ = generate_batch(model, [prompt], n_new, temperature=temperature, seed=seed)
     return list(prompt) + outs[0]
 
 

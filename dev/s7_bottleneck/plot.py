@@ -1,6 +1,6 @@
 """S7 deliverable figure: the failure waterfall and where the oracle points.
 
-Reads the engine's run table and writes docs/s7-bottleneck.svg. Panel 1:
+Reads the engine's run table and writes figures/s7-bottleneck.svg. Panel 1:
 the waterfall — eval samples per failure class, per corpus. Panel 2: the
 oracle ladder — exact match under free, grammar-constrained, gold-name,
 and gold-structure decoding. Panel 3: value-hole accuracy under gold
@@ -206,7 +206,9 @@ def main() -> None:
         ha="left",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93))
-    fig.savefig("docs/s7-bottleneck.svg", facecolor=fig.get_facecolor())
+    out = Path(__file__).parent / "figures" / "s7-bottleneck.svg"
+    out.parent.mkdir(exist_ok=True)
+    fig.savefig(out, facecolor=fig.get_facecolor())
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""S2 — external benchmark baseline on google/mobile-actions (ROADMAP.md).
+"""S2 — external benchmark baseline on google/mobile-actions.
 
 Implicit-tool mode: the 7-function surface lives in the weights; the prompt
 is the timestamp line plus the user request. Scored with ordered strict

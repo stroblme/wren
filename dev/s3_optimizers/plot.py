@@ -1,13 +1,14 @@
 """S3 deliverable figure: loss at the fixed step budget per optimizer.
 
 Reads the engine's run table (`fluksio export runs`) and writes
-docs/s3-optimizer-bakeoff.svg. Left: the LR sweep (seed 0, depth 8).
+figures/s3-optimizer-bakeoff.svg. Left: the LR sweep (seed 0, depth 8).
 Right: seed spread at each winner, with depth 16 as open markers.
 """
 
 import csv
 import io
 import subprocess
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 from matplotlib import ticker
@@ -126,7 +127,9 @@ def main() -> None:
         ha="left",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.94))
-    fig.savefig("docs/s3-optimizer-bakeoff.svg", facecolor=fig.get_facecolor())
+    out = Path(__file__).parent / "figures" / "s3-optimizer-bakeoff.svg"
+    out.parent.mkdir(exist_ok=True)
+    fig.savefig(out, facecolor=fig.get_facecolor())
 
 
 if __name__ == "__main__":

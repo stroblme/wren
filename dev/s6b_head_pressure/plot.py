@@ -1,6 +1,6 @@
 """S6b deliverable figure: the shared−banded gap as heads get narrow.
 
-Reads the engine's run table and writes docs/s6b-head-pressure.svg.
+Reads the engine's run table and writes figures/s6b-head-pressure.svg.
 Panels 1–3: held-out bits/byte at windows 128 and 256 and train loss at
 budget, each vs head count, shared vs banded with seed spread — the gap
 between the arms is the result. Panel 4: per-head entropy at 32 heads,
@@ -158,7 +158,9 @@ def main() -> None:
         ha="left",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93))
-    fig.savefig("docs/s6b-head-pressure.svg", facecolor=fig.get_facecolor())
+    out = Path(__file__).parent / "figures" / "s6b-head-pressure.svg"
+    out.parent.mkdir(exist_ok=True)
+    fig.savefig(out, facecolor=fig.get_facecolor())
 
 
 if __name__ == "__main__":

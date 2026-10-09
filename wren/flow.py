@@ -7,7 +7,7 @@ reported, and the weights it produced. The node is a thin wrapper around
 `train(model, text)` keeps working.
 
 Every knob is a flow *input* rather than a node setting, because
-`fluksio sweep --param` varies inputs (DECISIONS.md), and its default comes
+`fluksio sweep --param` varies inputs, and its default comes
 from `wren.train.DEFAULTS` -- the model shape included, so a run records the
 model it trained instead of whatever `Config` happened to say on the worker.
 """
@@ -40,7 +40,7 @@ PORTS = [
     # No `gpus` declaration: this is the shipped training command, so a machine
     # without a card should train on the CPU rather than refuse the run.
     # preallocate=false leaves room beside a study holding the same card --
-    # jax otherwise takes 75% of it at import (NOTEPAD.md).
+    # jax otherwise takes 75% of it at import.
     resources={"env": {"XLA_PYTHON_CLIENT_PREALLOCATE": "false"}},
 )
 def fit(

@@ -1,6 +1,6 @@
 """S4 deliverable figure: spectrum migration, length generalization, probe.
 
-Reads the engine's run table and writes docs/s4-learnable-freqs.svg. Left:
+Reads the engine's run table and writes figures/s4-learnable-freqs.svg. Left:
 init vs learned spectrum per freq_lr. Middle: held-out bits/byte at eval
 windows {128, 192, 256} per mode. Right: the Rotosolve-precondition probe,
 loss over one period of frequency 8.
@@ -207,7 +207,9 @@ def main() -> None:
         ha="left",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.94))
-    fig.savefig("docs/s4-learnable-freqs.svg", facecolor=fig.get_facecolor())
+    out = Path(__file__).parent / "figures" / "s4-learnable-freqs.svg"
+    out.parent.mkdir(exist_ok=True)
+    fig.savefig(out, facecolor=fig.get_facecolor())
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ from wren.model import Config, Wren
 
 
 def muon(lr: float) -> optax.GradientTransformation:
-    """Wren's default optimizer since the s3 bake-off (RESEARCH.md): Muon
+    """Wren's default optimizer since the s3 bake-off (dev/s3_optimizers): Muon
     preconditions the attention matrices; the tied embedding (also 2D) and
     the norm scales fall through to its inner AdamW, standard practice."""
 

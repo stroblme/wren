@@ -1,4 +1,4 @@
-"""S5 — QK-norm as a barren-plateau diagnostic (ROADMAP.md).
+"""S5 — QK-norm as a barren-plateau diagnostic.
 
 QML's trainability instrument — gradient variance as a function of depth
 (McClean et al., arXiv:1803.11173) — applied to the SAN paper's claim that
@@ -90,7 +90,7 @@ class ProbeBlock(AttentionBlock):
 
         Returns (block output, normalized attention entropy, per-slot logit
         power). The rotated q.k product for pair i is exactly a_i cos(w_i
-        (n-m)) + b_i sin(w_i (n-m)) (qfm-relation.md §1), so summing the
+        (n-m)) + b_i sin(w_i (n-m)), so summing the
         per-pair contributions reproduces the attention scores — pinned by
         the decomposition self-check.
         """

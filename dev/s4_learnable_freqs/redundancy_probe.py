@@ -1,6 +1,6 @@
-"""S4 addendum — the redundancy probe (RESEARCH.md).
+"""S4 addendum — the redundancy probe.
 
-Prediction from the aliasing analysis (qfm-relation.md §1): a frequency in
+Prediction from the aliasing analysis: a frequency in
 the under-trained band (period > train window) is in-distribution
 redundant — the window-128 loss barely moves along its coordinate slice —
 while the window-256 loss moves strongly along the same slice; an in-band
@@ -14,7 +14,7 @@ Pure analysis over the weights artifacts of finished s4 runs — no
 training. Sweeps slots 8 (in-band, omega 0.1) and 18 (under-trained,
 omega ~0.0056) of the fixed and learned@3e-3 seed-0 models over
 omega in [1e-3, pi), evaluating held-out loss at windows 128 and 256.
-Writes docs/s4-redundancy-probe.svg and prints the span table.
+Writes figures/s4-redundancy-probe.svg and prints the span table.
 
     uv run python dev/s4_learnable_freqs/redundancy_probe.py
 """
@@ -85,7 +85,7 @@ def fetch_weights(directory: Path) -> dict[str, Path]:
 
 
 def main() -> None:
-    # Before jax loads: share the card politely (see NOTEPAD.md).
+    # Before jax loads: share the card politely.
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     sys.path.insert(0, str(Path(__file__).parent))
 
@@ -219,7 +219,9 @@ def main() -> None:
         ha="left",
     )
     fig.tight_layout(rect=(0, 0, 1, 0.94))
-    fig.savefig("docs/s4-redundancy-probe.svg", facecolor=fig.get_facecolor())
+    out = Path(__file__).parent / "figures" / "s4-redundancy-probe.svg"
+    out.parent.mkdir(exist_ok=True)
+    fig.savefig(out, facecolor=fig.get_facecolor())
 
 
 if __name__ == "__main__":

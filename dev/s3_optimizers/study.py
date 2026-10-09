@@ -1,4 +1,4 @@
-"""S3 — optimizer bake-off: AdamW vs Muon vs K-FAC (ROADMAP.md).
+"""S3 — optimizer bake-off: AdamW vs Muon vs K-FAC.
 
 Fixed step budget, matched tuning effort: one LR sweep per optimizer (the
 grids differ because their step scales differ), then >=3 seeds at each
@@ -164,14 +164,15 @@ def bakeoff(
         )
         for step in range(steps):
             key, sub, rng = jax.random.split(key, 3)
-            # ty: kfac's step returns 3 values when value_func_has_state=False
+            # ty: kfac's step returns 3 values when value_func_has_state=False,
+            # and its signature lets **knobs match the data iterator
             params, opt_state, stats = opt.step(  # ty: ignore[invalid-assignment]
                 params,
                 opt_state,
                 rng,
                 batch=sample_batch(data, batch_size, seq_len, sub),
                 global_step_int=step,
-                **knobs,
+                **knobs,  # ty: ignore[invalid-argument-type]
             )
             loss = float(stats["loss"])
             if step % log_every == 0 or step == steps - 1:
