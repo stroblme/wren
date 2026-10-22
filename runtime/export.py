@@ -6,6 +6,7 @@ weights per byte in (out, in) row order. Embeddings and norms remain fp32.
     uv run python runtime/export.py runtime/weights-qat.npz wren/wren.bin
 """
 
+import os
 import struct
 import sys
 
@@ -32,7 +33,6 @@ def _pack2(q: np.ndarray) -> bytes:
 def export(npz_path: str, out_path: str) -> None:
     npz = np.load(npz_path)
     cfg = {k.removeprefix("cfg:"): int(npz[k]) for k in npz.files if "cfg:" in k}
-    n_layers = cfg["n_layers"]
     with open(out_path, "wb") as f:
         f.write(MAGIC)
         f.write(
@@ -48,7 +48,7 @@ def export(npz_path: str, out_path: str) -> None:
         f.write(struct.pack("<i", cfg["context"]))
         f.write(npz["['embed']['embedding'].value"].astype("<f4").tobytes())
         f.write(npz["['norm']['scale'].value"].astype("<f4").tobytes())
-        for li in range(n_layers):
+        for li in range(cfg["n_layers"]):
             b = f"['blocks'][{li}]"
             f.write(npz[f"{b}['norm']['scale'].value"].astype("<f4").tobytes())
             f.write(npz[f"{b}['q_norm']['scale'].value"].astype("<f4").tobytes())
@@ -61,6 +61,4 @@ def export(npz_path: str, out_path: str) -> None:
 
 if __name__ == "__main__":
     export(sys.argv[1], sys.argv[2])
-    import os
-
     print(f"{sys.argv[2]}: {os.path.getsize(sys.argv[2]) / 1e6:.2f} MB")

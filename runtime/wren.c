@@ -20,6 +20,8 @@
 #include <string.h>
 
 #define EPS 1e-6f
+#define MAX_HEAD_DIM 256
+#define MAX_CONTEXT 8192
 
 typedef struct {
     float *norm, *q_norm, *k_norm; /* (dim), (head_dim), (head_dim) */
@@ -72,7 +74,13 @@ static Model load_model(const char *path) {
     }
     Model m = {.vocab = hdr[1], .dim = hdr[2], .n_layers = hdr[3],
                .n_heads = hdr[4], .context = hdr[5]};
-    m.head_dim = m.dim / m.n_heads;
+    m.head_dim = m.n_heads > 0 ? m.dim / m.n_heads : 0;
+    if (m.head_dim < 2 || m.head_dim > MAX_HEAD_DIM || m.head_dim % 2 ||
+        m.dim != m.head_dim * m.n_heads || m.vocab < 256 || m.n_layers < 1 ||
+        m.context < 1 || m.context > MAX_CONTEXT) {
+        fprintf(stderr, "%s: bad header\n", path);
+        exit(1);
+    }
     m.embed = read_f32(f, (size_t)m.vocab * m.dim);
     m.final_norm = read_f32(f, m.dim);
     m.layers = xmalloc(m.n_layers * sizeof(Layer));
@@ -81,9 +89,9 @@ static Model load_model(const char *path) {
         ly->norm = read_f32(f, m.dim);
         ly->q_norm = read_f32(f, m.head_dim);
         ly->k_norm = read_f32(f, m.head_dim);
-        if (fread(&ly->wqkv_scale, sizeof(float), 1, f) != 1) exit(1);
+        if (fread(&ly->wqkv_scale, sizeof(float), 1, f) != 1) { fprintf(stderr, "truncated file\n"); exit(1); }
         ly->wqkv = read_packed(f, (size_t)3 * m.dim * m.dim, ly->wqkv_scale);
-        if (fread(&ly->wo_scale, sizeof(float), 1, f) != 1) exit(1);
+        if (fread(&ly->wo_scale, sizeof(float), 1, f) != 1) { fprintf(stderr, "truncated file\n"); exit(1); }
         ly->wo = read_packed(f, (size_t)m.dim * m.dim, ly->wo_scale);
         size_t cache = (size_t)m.context * m.dim;
         ly->k_cache = xmalloc(cache * sizeof(float));
@@ -134,7 +142,7 @@ static void step(Model *m, int token, int pos, float *logits, float *x,
             float *q = qkv + head * hd;
             float *k = qkv + m->dim + head * hd;
             float *v = qkv + 2 * m->dim + head * hd;
-            float qn[256], kn[256]; /* head_dim <= 256 */
+            float qn[MAX_HEAD_DIM], kn[MAX_HEAD_DIM];
             rmsnorm(q, ly->q_norm, qn, hd);
             rmsnorm(k, ly->k_norm, kn, hd);
             rope(qn, pos, half);
@@ -192,23 +200,23 @@ int main(int argc, char **argv) {
         return 2;
     }
     Model m = load_model(path);
+    if (n_new < 1 || n_new >= m.context) {
+        fprintf(stderr, "-n must be in 1..%d\n", m.context - 1);
+        return 2;
+    }
 
-    unsigned char prompt[4096];
-    size_t len = 0;
+    /* Only the tail of an over-long prompt fits the context window: keep
+     * the last `budget` bytes in a ring buffer. */
+    size_t budget = (size_t)(m.context - n_new), total = 0;
+    unsigned char *ring = xmalloc(budget);
     if (prompt_arg) {
-        len = strlen(prompt_arg);
-        if (len >= sizeof(prompt)) len = sizeof(prompt) - 1;
-        memcpy(prompt, prompt_arg, len);
-        if (len == 0 || prompt[len - 1] != '\n') prompt[len++] = '\n';
+        size_t n = strlen(prompt_arg);
+        for (size_t i = 0; i < n; i++) ring[total++ % budget] = prompt_arg[i];
+        if (n == 0 || prompt_arg[n - 1] != '\n') ring[total++ % budget] = '\n';
     } else {
-        len = fread(prompt, 1, sizeof(prompt), stdin);
+        for (int c; (c = getchar()) != EOF;) ring[total++ % budget] = c;
     }
-    /* Only the tail of an over-long prompt fits the context window. */
-    size_t budget = (size_t)m.context - (size_t)(n_new < m.context ? n_new : 0);
-    if (len > budget) {
-        memmove(prompt, prompt + len - budget, budget);
-        len = budget;
-    }
+    size_t len = total < budget ? total : budget;
     if (len == 0) { fprintf(stderr, "empty prompt\n"); return 2; }
 
     float *logits = xmalloc(m.vocab * sizeof(float));
@@ -218,9 +226,9 @@ int main(int argc, char **argv) {
     float *o = xmalloc(m.dim * sizeof(float));
     float *scores = xmalloc(m.context * sizeof(float));
 
-    int tokens[8192];
+    int tokens[MAX_CONTEXT];
     int n = 0;
-    for (size_t i = 0; i < len; i++) tokens[n++] = prompt[i];
+    for (size_t i = total - len; i < total; i++) tokens[n++] = ring[i % budget];
     int limit = (int)len + n_new;
     if (limit > m.context) limit = m.context;
     for (int pos = 0; pos < n; pos++) {
