@@ -789,8 +789,8 @@ wheels = [
 
 [[package]]
 name = "fluksio"
-version = "0.1.4+dev"
-source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=8a94bf10d79f7eacc97ad32719a4c00a43d3a317#8a94bf10d79f7eacc97ad32719a4c00a43d3a317" }
+version = "0.1.6"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alembic" },
     { name = "croniter" },
@@ -816,13 +816,21 @@ dependencies = [
     { name = "uv" },
     { name = "websockets" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/4c/818866a02c6e72f5891e7e3d2407c8dae224886fc1a7645aefa5c4e53295/fluksio-0.1.6.tar.gz", hash = "sha256:c0375cf16c0f6002ce50457a49619a3a97f52b130497bab6fe2448df4970d641", size = 566532, upload-time = "2026-10-03T09:56:05.9Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b0/d8/231da5f8b6df5d26435856fce8ab28b697fdb2d90b64b72ad2c5d977c2c7/fluksio-0.1.6-py3-none-any.whl", hash = "sha256:e7fac28b54b871cd77bad550d7a15881b3320c8f5d23a3795a63ceeed5d196b5", size = 467975, upload-time = "2026-10-03T09:56:03.407Z" },
+]
 
 [[package]]
 name = "fluksio-worker"
-version = "0.1.4+dev"
-source = { git = "https://git.stroblme.de/Fluksio/app?subdirectory=worker&rev=8a94bf10d79f7eacc97ad32719a4c00a43d3a317#8a94bf10d79f7eacc97ad32719a4c00a43d3a317" }
+version = "0.1.6"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e7/1a/dff46f370ec3bf3356aee0678c215a3bd9807883e26cbc0da1c12b0e162d/fluksio_worker-0.1.6.tar.gz", hash = "sha256:f9935446a27e182ab19011eaa7ceeafdc1d7b9f0ceabb0d8802a424f4bbf90ff", size = 27348, upload-time = "2026-10-03T09:56:01.089Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/8e/b3547f3b52366f6c649f681412eef4411e18c41a7235ae82d7b1babaf81c/fluksio_worker-0.1.6-py3-none-any.whl", hash = "sha256:86e9d53a00c248b7738f5654a7f49ccda3422e9cc739c3871ec964ba593ddee4", size = 29392, upload-time = "2026-10-03T09:55:59.553Z" },
 ]
 
 [[package]]
@@ -3692,7 +3700,7 @@ provides-extras = ["train"]
 cuda12 = [{ name = "jax", extras = ["cuda12"], specifier = ">=0.11.1" }]
 cuda13 = [{ name = "jax", extras = ["cuda13"], specifier = ">=0.11.1" }]
 dev = [
-    { name = "fluksio", git = "https://git.stroblme.de/Fluksio/app?subdirectory=backend&rev=8a94bf10d79f7eacc97ad32719a4c00a43d3a317" },
+    { name = "fluksio", specifier = ">=0.1.6" },
     { name = "kfac-jax", git = "https://github.com/google-deepmind/kfac-jax" },
     { name = "matplotlib", specifier = ">=3.11.1" },
     { name = "pytest", specifier = ">=9.1.1" },

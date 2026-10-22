@@ -29,13 +29,12 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.5",
     "ty>=0.0.75",
-    "fluksio",
+    "fluksio>=0.1.6",
     "kfac-jax>=0.0.8",
     "matplotlib>=3.11.1",
 ]
 
 [tool.uv.sources]
-fluksio = { git = "https://git.stroblme.de/Fluksio/app", rev = "8a94bf10d79f7eacc97ad32719a4c00a43d3a317", subdirectory = "backend" }
 kfac-jax = { git = "https://github.com/google-deepmind/kfac-jax" }
 
 [build-system]
