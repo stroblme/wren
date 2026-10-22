@@ -57,6 +57,7 @@ def test_parse_rejects_malformed():
     assert parse_calls(">> send_email(to='unterminated") is None
     assert parse_calls(">> send_email('positional')") is None
     assert parse_calls(">> get()(x=1)") is None
+    assert parse_calls(">> get(x={[1]: 2})") is None
     assert parse_calls("no call marker at all") == []
 
 

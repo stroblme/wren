@@ -2,6 +2,7 @@
 
 import pathlib
 import shutil
+import struct
 import subprocess
 import sys
 
@@ -49,13 +50,20 @@ def test_numpy_matches_jax_ternary_forward(packed):
     assert np.allclose(logits, decode, atol=1e-3), np.abs(logits - decode).max()
 
 
-@pytest.mark.skipif(shutil.which("cc") is None, reason="no C compiler")
-def test_c_binary_matches_numpy(packed, tmp_path):
-    _, pack, bin_path = packed
-    exe = tmp_path / "wren-rt"
+@pytest.fixture(scope="module")
+def exe(tmp_path_factory):
+    """Compile runtime/wren.c once per module."""
+    if shutil.which("cc") is None:
+        pytest.skip("no C compiler")
+    path = tmp_path_factory.mktemp("c") / "wren-rt"
     subprocess.run(
-        ["cc", "-O3", "-o", str(exe), str(RUNTIME / "wren.c"), "-lm"], check=True
+        ["cc", "-O3", "-o", str(path), str(RUNTIME / "wren.c"), "-lm"], check=True
     )
+    return path
+
+
+def test_c_binary_matches_numpy(packed, exe):
+    _, pack, bin_path = packed
     for prompt in ("turn on the lights in the kitchen", "what is the temperature"):
         want, _ = runtime.generate(pack, list(f"{prompt}\n".encode()), 48)
         got = subprocess.run(
@@ -66,8 +74,64 @@ def test_c_binary_matches_numpy(packed, tmp_path):
         assert list(got) == want, (bytes(want), got)
 
 
-# Held-out prompts (dataset.home() eval split) and what the original
-# per-byte float64 reference (runtime/export.py before the move) generated.
+def test_c_binary_keeps_tail_of_long_prompt(packed, exe):
+    _, pack, bin_path = packed
+    prompt = b"turn on the lights in the kitchen\n" * 150  # ~5000 bytes
+    want, _ = runtime.generate(pack, list(prompt), 48)
+    got = subprocess.run(
+        [str(exe), str(bin_path), "-n", "48"],
+        input=prompt,
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert list(got) == want, (bytes(want), got)
+
+
+@pytest.mark.parametrize("n_new", [-200, 0, 96])
+def test_c_binary_rejects_bad_n_new(packed, exe, n_new):
+    run = subprocess.run(
+        [str(exe), str(packed[2]), "-n", str(n_new), "hi"],
+        capture_output=True,
+        check=False,
+    )
+    assert run.returncode == 2 and b"-n must be" in run.stderr
+
+
+# (vocab, dim, n_layers, n_heads, context)
+BAD_HEADERS = [(256, 64, 1, 0, 96), (256, 64, 1, 3, 96), (256, 1024, 1, 2, 96)]
+BAD_HEADERS += [(256, 64, 1, 2, 9000), (128, 64, 1, 2, 96)]
+
+
+@pytest.mark.parametrize("hdr", BAD_HEADERS)
+def test_c_binary_rejects_bad_header(exe, tmp_path, hdr):
+    path = tmp_path / "bad.bin"
+    path.write_bytes(runtime.MAGIC + struct.pack("<6i", runtime.VERSION, *hdr))
+    run = subprocess.run([str(exe), str(path), "hi"], capture_output=True, check=False)
+    assert run.returncode != 0 and b"bad header" in run.stderr
+
+
+def test_c_binary_reports_truncated_file(packed, exe, tmp_path):
+    path = tmp_path / "short.bin"
+    path.write_bytes(packed[2].read_bytes()[:-100])
+    run = subprocess.run([str(exe), str(path), "hi"], capture_output=True, check=False)
+    assert run.returncode != 0 and b"truncated file" in run.stderr
+
+
+@pytest.mark.parametrize("n_new", [0, 96, 200])
+def test_generate_rejects_bad_n_new(packed, n_new):
+    with pytest.raises(ValueError, match="n_new"):
+        runtime.generate(packed[1], list(b"hi\n"), n_new)
+
+
+def test_load_pack_rejects_bad_magic(tmp_path):
+    path = tmp_path / "bad.bin"
+    path.write_bytes(b"NOPE" + bytes(24))
+    with pytest.raises(ValueError):
+        runtime.load_pack(path)
+
+
+# Held-out prompts (dataset.home() eval split) and the reference outputs of
+# the shipped wren.bin.
 REFERENCE = [
     (
         (

@@ -6,6 +6,7 @@ import sys
 
 from wren import Call, Device, House, act, render_state, select_areas
 from wren.dataset import _house, _render_state
+from wren.home import N_NEW
 
 HOUSE = House(
     time="19:30",
@@ -118,3 +119,24 @@ def test_act_maps_any_id_shape():
     assert act("water the garden", house)[0] == [
         Call("watering.start", {"id": "3f2a9c1e-valve"})
     ]
+
+
+def test_act_rejects_unhashable_id(monkeypatch):
+    answer = list(b">> lights.on(id=[1])\n\n")
+    monkeypatch.setattr(
+        "wren.runtime.generate", lambda pack, prompt, n_new: (answer, [0.5])
+    )
+    assert act("turn on the lights in the kitchen", HOUSE) == ([], 0.5)
+
+
+def test_act_fits_the_prompt_to_the_pack_context(monkeypatch):
+    """Check that a smaller pack gets a prompt that fits beside the answer."""
+    seen = []
+
+    def generate(pack, prompt, n_new):
+        seen.append(len(prompt))
+        return list(b"\n"), [1.0]
+
+    monkeypatch.setattr("wren.runtime.generate", generate)
+    act("turn on the lights in the kitchen", HOUSE, model={"cfg": {"context": 240}})
+    assert seen[0] <= 240 - N_NEW
