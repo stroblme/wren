@@ -208,6 +208,8 @@ def template_decode(
         for t in range(width - 1):
             if done.all():
                 break
+            # Private API: forcing bytes between cached steps needs a single
+            # step, which generate_batch does not expose.
             logits, caches = _decode_step(
                 model, jnp.asarray(buf[:, t : t + 1]), caches, jnp.int32(t)
             )
@@ -382,6 +384,8 @@ def dataset(corpus: str) -> dict:
         Port("seed", "int"),
         Port("steps", "int"),
         Port("n_eval", "int"),
+        Port("dim", "int"),
+        Port("n_layers", "int"),
     ],
     provides=[
         Port("loss", "float", stream=True),
@@ -405,6 +409,8 @@ def study(
     seed: int,
     steps: int = 2000,
     n_eval: int = 0,
+    dim: int = 256,
+    n_layers: int = 8,
     batch_size: int = 16,
     gen_batch: int = 64,
     log_every: int = 50,
@@ -418,7 +424,10 @@ def study(
         raise RuntimeError("jax sees no card: `uv sync --group cuda12`, restart engine")
 
     proto = PROTOCOL[corpus]
-    model = Wren(Config(context=proto["context"]), rngs=nnx.Rngs(seed))
+    model = Wren(
+        Config(dim=dim, n_layers=n_layers, context=proto["context"]),
+        rngs=nnx.Rngs(seed),
+    )
     optimizer = nnx.Optimizer(model, muon(lr), wrt=nnx.Param)
     data = jnp.array(tokenizer.encode(train_text), dtype=jnp.int32)
     key = jax.random.PRNGKey(seed)
@@ -572,6 +581,8 @@ Flow(
         Port("seed", "int", initial=0),
         Port("steps", "int", initial=2000),
         Port("n_eval", "int", initial=0),
+        Port("dim", "int", initial=256),
+        Port("n_layers", "int", initial=8),
     ],
     outputs=[
         "final_loss",

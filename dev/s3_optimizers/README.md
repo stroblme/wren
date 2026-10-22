@@ -41,6 +41,8 @@ K-FAC in kfac-jax's adaptive mode.
 
 ## Reproduce
 
+Training requires one CUDA GPU (`uv sync --group cuda12`):
+
 ```sh
 uv run fluksio sweep s3_optimizers --param optimizer=adamw --param lr=3e-4,1e-3,3e-3,1e-2 --param seed=0
 uv run fluksio sweep s3_optimizers --param optimizer=muon --param lr=1e-3,3e-3,1e-2,3e-2,1e-1 --param seed=0

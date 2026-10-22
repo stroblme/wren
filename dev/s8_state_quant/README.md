@@ -44,7 +44,6 @@ Training requires one CUDA GPU (`uv sync --group cuda12`):
 
 ```sh
 uv run python dev/s8_state_quant/study.py   # self-checks
-uv run fluksio sync dev/s8_state_quant
 uv run fluksio sweep s8_state_quant --param quant=fp32,int8,ternary
 uv run fluksio sweep s8_state_quant --param n_train=64000,256000
 uv run fluksio sweep s8_state_quant --param n_train=256000 --param steps=16000 --param quant=fp32,ternary

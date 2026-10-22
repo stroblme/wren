@@ -34,12 +34,12 @@ study uses.
 
 ## Reproduce
 
+Training requires one CUDA GPU (`uv sync --group cuda12`):
+
 ```sh
-uv run fluksio run s1_baseline --follow
+uv run fluksio run s1_baseline --defaults --follow
 ```
 
-Commit `8764546` replaced the template corpus with the state-conditioned
-generator, so the flow runs only at `8764546~1` or earlier. Commit `d04dded`
-raised the default width to 256, so checkouts before it are needed to reproduce
-the recorded dim 128. The local Fluksio engine (`uv run fluksio serve --gpus 1`)
-records the run and its weights artifact; s1 produces no figure.
+The corpus node rebuilds the template corpus byte-identically and the model
+shape is pinned to dim 128 and 8 layers, but the model code has changed since,
+so the numbers may not reproduce exactly. s1 produces no figure.

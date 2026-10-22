@@ -45,7 +45,6 @@ Training requires one CUDA GPU (`uv sync --group cuda12`):
 
 ```sh
 uv run python dev/s6_banded_heads/study.py   # self-checks
-uv run fluksio sync dev/s6_banded_heads
 uv run fluksio sweep s6_banded_heads --param mode=shared,banded,banded_learned --param seed=0,1,2
 uv run python dev/s6_banded_heads/plot.py
 ```

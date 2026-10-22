@@ -147,7 +147,7 @@ class BandedWren(Wren):
 
     def __call__(self, tokens: jax.Array) -> jax.Array:
         x = self.embed(tokens)
-        freqs = jnp.exp(self.log_freqs.value)
+        freqs = jnp.exp(self.log_freqs[...])
         for block in self.blocks:
             x = block.forward(x, freqs)
         return self.embed.attend(self.norm(x))
@@ -155,7 +155,7 @@ class BandedWren(Wren):
     def profile(self, tokens: jax.Array) -> tuple[jax.Array, jax.Array]:
         """Return layer/head entropy (L, H) and distance profiles (L, H, NBINS)."""
         x = self.embed(tokens)
-        freqs = jnp.exp(self.log_freqs.value)
+        freqs = jnp.exp(self.log_freqs[...])
         ents, profiles = [], []
         for block in self.blocks:
             x, ent, prof = block.head_stats(x, freqs)
@@ -307,7 +307,7 @@ def study(
         loss = float(train_step(model, optimizer, x, y))
         if step % log_every == 0 or step == steps - 1:
             fluksio.emit(loss=loss)
-            freq_history.append(np.exp(np.asarray(model.log_freqs.value)).tolist())
+            freq_history.append(np.exp(np.asarray(model.log_freqs[...])).tolist())
 
     held = jnp.array(tokenizer.encode(eval_text), dtype=jnp.int32)
     bpb = {f"bpb_{n}": eval_bpb(model, held, n, batch_size) for n in (128, 192, 256)}
@@ -394,11 +394,11 @@ if __name__ == "__main__":
     for _mode, _m in (("banded_learned", jnp.asarray(_mask)), ("fixed", None)):
         _model = BandedWren(_cfg, nnx.Rngs(0), _init)
         _opt = nnx.Optimizer(_model, freq_routed(3e-3, 3e-3, _m), wrt=nnx.Param)
-        _before = _model.log_freqs.value.copy()
-        _wqkv_before = _model.blocks[0].wqkv.kernel.value.copy()
+        _before = _model.log_freqs[...].copy()
+        _wqkv_before = _model.blocks[0].wqkv.kernel[...].copy()
         train_step(_model, _opt, _tokens, _tokens)
-        _moved = ~np.isclose(np.asarray(_before), np.asarray(_model.log_freqs.value))
+        _moved = ~np.isclose(np.asarray(_before), np.asarray(_model.log_freqs[...]))
         assert (_moved == _mask).all() if _m is not None else not _moved.any(), _mode
-        assert not jnp.allclose(_wqkv_before, _model.blocks[0].wqkv.kernel.value), _mode
+        assert not jnp.allclose(_wqkv_before, _model.blocks[0].wqkv.kernel[...]), _mode
 
     print("s6 self-checks ok")

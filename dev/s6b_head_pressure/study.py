@@ -151,7 +151,7 @@ class BandedWren(Wren):
 
     def __call__(self, tokens: jax.Array) -> jax.Array:
         x = self.embed(tokens)
-        freqs = jnp.exp(self.log_freqs.value)
+        freqs = jnp.exp(self.log_freqs[...])
         for block in self.blocks:
             x = block.forward(x, freqs)
         return self.embed.attend(self.norm(x))
@@ -159,7 +159,7 @@ class BandedWren(Wren):
     def profile(self, tokens: jax.Array) -> tuple[jax.Array, jax.Array]:
         """Return layer/head entropy (L, H) and distance profiles (L, H, NBINS)."""
         x = self.embed(tokens)
-        freqs = jnp.exp(self.log_freqs.value)
+        freqs = jnp.exp(self.log_freqs[...])
         ents, profiles = [], []
         for block in self.blocks:
             x, ent, prof = block.head_stats(x, freqs)
@@ -380,10 +380,10 @@ if __name__ == "__main__":
 
         # The spectrum never moves; everything else trains.
         _opt = nnx.Optimizer(_banded, freq_routed(3e-3), wrt=nnx.Param)
-        _before = _banded.log_freqs.value.copy()
-        _wqkv_before = _banded.blocks[0].wqkv.kernel.value.copy()
+        _before = _banded.log_freqs[...].copy()
+        _wqkv_before = _banded.blocks[0].wqkv.kernel[...].copy()
         train_step(_banded, _opt, _tokens, _tokens)
-        assert jnp.allclose(_before, _banded.log_freqs.value), _nh
-        assert not jnp.allclose(_wqkv_before, _banded.blocks[0].wqkv.kernel.value), _nh
+        assert jnp.allclose(_before, _banded.log_freqs[...]), _nh
+        assert not jnp.allclose(_wqkv_before, _banded.blocks[0].wqkv.kernel[...]), _nh
 
     print("s6b self-checks ok")

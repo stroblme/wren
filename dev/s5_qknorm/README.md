@@ -43,8 +43,9 @@ too.
 
 ## Reproduce
 
+Training requires one CUDA GPU (`uv sync --group cuda12`):
+
 ```sh
-uv run fluksio sync dev/s5_qknorm
 uv run fluksio sweep s5_qknorm --param depth=4,8,16,32 --param qk_norm=on,off --param seed=0,1,2
 uv run python dev/s5_qknorm/plot.py
 ```

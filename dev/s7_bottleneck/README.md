@@ -35,9 +35,9 @@ plus both at 8000 steps (seed 0).
   studies use 8000. Confidence ranks correctness (AUROC 0.87–0.94 HA, 0.97–1.00
   mobile) despite ECE 0.32–0.75.
 - The README benchmark's fp32 rows are 8000-step mobile runs of this flow: dim
-  256 × 8 reaches 30.6% at 25.3 B/s on CPU, dim 128 × 36 (set in `Config`) 34.8%
-  at 8.9 B/s. Defaults keep a wide, shallow model; s8 (`dev/s8_state_quant`)
-  uses data that requires copying.
+  256 × 8 reaches 30.6% at 25.3 B/s on CPU, dim 128 × 36 (flow inputs `dim`,
+  `n_layers`) 34.8% at 8.9 B/s. Defaults keep a wide, shallow model; s8
+  (`dev/s8_state_quant`) uses data that requires copying.
 
 ## Reproduce
 
@@ -45,9 +45,9 @@ Training requires one CUDA GPU (`uv sync --group cuda12`):
 
 ```sh
 uv run python dev/s7_bottleneck/study.py   # self-checks
-uv run fluksio sync dev/s7_bottleneck
 uv run fluksio sweep s7_bottleneck --param corpus=ha,mobile --param seed=0,1,2
 uv run fluksio sweep s7_bottleneck --param corpus=ha,mobile --param steps=8000 --param seed=0
+uv run fluksio sweep s7_bottleneck --param corpus=mobile --param steps=8000 --param dim=128 --param n_layers=36 --param seed=0
 uv run python dev/s7_bottleneck/plot.py
 ```
 

@@ -39,8 +39,10 @@ held-out off-domain prompts, ECE, and system metrics.
 
 ## Reproduce
 
+Training requires one CUDA GPU (`uv sync --group cuda12`):
+
 ```sh
-uv run fluksio run s2_mobile_actions --follow
+uv run fluksio run s2_mobile_actions --defaults --follow
 ```
 
 The flow's defaults (seed 0, 2000 steps, lr 3e-3) at the current default width

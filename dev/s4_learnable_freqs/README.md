@@ -44,8 +44,10 @@ seed-0 weights, it evaluates held-out loss along slot 8 (in-band) and slot 18
 
 ## Reproduce
 
+Training requires one CUDA GPU (`uv sync --group cuda12`):
+
 ```sh
-uv run fluksio sync dev/s4_learnable_freqs
+uv run python dev/s4_learnable_freqs/study.py   # self-checks
 uv run fluksio sweep s4_learnable_freqs --param mode=fixed --param seed=0,1,2
 uv run fluksio sweep s4_learnable_freqs --param mode=learned --param freq_lr=1e-3,3e-3,1e-2 --param seed=0
 uv run fluksio sweep s4_learnable_freqs --param mode=learned --param freq_lr=3e-3 --param seed=1,2

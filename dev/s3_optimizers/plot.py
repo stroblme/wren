@@ -21,16 +21,21 @@ INK, MUTED = "#0b0b0b", "#52514e"
 
 def rows() -> list[dict]:
     out = subprocess.run(
-        ["fluksio", "export", "runs", "--flow", "s3_optimizers"],
+        [
+            "fluksio",
+            "export",
+            "runs",
+            "--local",
+            "--flow",
+            "s3_optimizers",
+            "--status",
+            "ok",
+        ],
         capture_output=True,
         text=True,
         check=True,
     ).stdout
-    return [
-        r
-        for r in csv.DictReader(io.StringIO(out))
-        if r["status"] == "ok" and r["param.optimizer"]
-    ]
+    return [r for r in csv.DictReader(io.StringIO(out)) if r["param.optimizer"]]
 
 
 def main() -> None:

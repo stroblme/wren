@@ -85,7 +85,7 @@ class SpectralWren(Wren):
 
     def __call__(self, tokens: jax.Array) -> jax.Array:
         x = self.embed(tokens)
-        freqs = jnp.exp(self.log_freqs.value)
+        freqs = jnp.exp(self.log_freqs[...])
         for block in self.blocks:
             x = block.forward(x, freqs)
         return self.embed.attend(self.norm(x))
@@ -150,13 +150,13 @@ def probe_curve(
     """
     xs, ys = held_windows(held, seq_len)
     x, y = xs[:n_windows], ys[:n_windows]
-    saved = model.log_freqs.value
+    saved = model.log_freqs[...]
     omegas = np.linspace(0.0, 2.0 * math.pi, n_points, endpoint=False)[1:]
     losses = []
     for w in omegas:
-        model.log_freqs.value = saved.at[idx].set(math.log(float(w)))
+        model.log_freqs[...] = saved.at[idx].set(math.log(float(w)))
         losses.append(float(_ce(model, x, y)))
-    model.log_freqs.value = saved
+    model.log_freqs[...] = saved
     return omegas.tolist(), losses
 
 
@@ -241,7 +241,7 @@ def study(
         loss = float(train_step(model, optimizer, x, y))
         if step % log_every == 0 or step == steps - 1:
             fluksio.emit(loss=loss)
-            freq_history.append(np.exp(np.asarray(model.log_freqs.value)).tolist())
+            freq_history.append(np.exp(np.asarray(model.log_freqs[...])).tolist())
 
     held = jnp.array(tokenizer.encode(eval_text), dtype=jnp.int32)
     bpb = {f"bpb_{n}": eval_bpb(model, held, n, batch_size) for n in (128, 192, 256)}
@@ -306,10 +306,10 @@ if __name__ == "__main__":
         _opt = nnx.Optimizer(
             _m, freq_routed(3e-3, 3e-3, _mode == "learned"), wrt=nnx.Param
         )
-        _freqs_before = _m.log_freqs.value.copy()
-        _wqkv_before = _m.blocks[0].wqkv.kernel.value.copy()
+        _freqs_before = _m.log_freqs[...].copy()
+        _wqkv_before = _m.blocks[0].wqkv.kernel[...].copy()
         train_step(_m, _opt, _tokens, _tokens)
-        assert bool(jnp.allclose(_freqs_before, _m.log_freqs.value)) != _moves, _mode
-        assert not jnp.allclose(_wqkv_before, _m.blocks[0].wqkv.kernel.value), _mode
+        assert bool(jnp.allclose(_freqs_before, _m.log_freqs[...])) != _moves, _mode
+        assert not jnp.allclose(_wqkv_before, _m.blocks[0].wqkv.kernel[...]), _mode
 
     print("s4 self-checks ok")

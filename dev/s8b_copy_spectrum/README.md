@@ -10,7 +10,8 @@ bands carry the match signal at the copy edges?
 This eval-only probe uses trained fp32 weights from s8 (`dev/s8_state_quant`).
 It teacher-forces evaluation samples that require copying through the stock
 forward pass and records each layer's queries, keys, and attention. The main
-numbers come from 96 samples on the run with 256k samples and 16000 steps; the
+numbers come from the run with 256k samples and 16000 steps, where 96 of the
+default 128 samples passed the span and context filters at the time; the
 64k-sample checkpoint serves as comparison.
 
 | instrument | measures |
@@ -41,11 +42,15 @@ numbers come from 96 samples on the run with 256k samples and 16000 steps; the
 Runs on CPU:
 
 ```sh
-uv run fluksio artifacts 1788349170374-a97fddf7 s8_state_quant.weights -o weights.npz
-JAX_PLATFORMS=cpu uv run python dev/s8b_copy_spectrum/probe.py weights.npz --n-train 256000
+uv run fluksio artifacts 1788349170374-a97fddf7 s8_state_quant.weights -o /tmp/s8b-weights.npz
+JAX_PLATFORMS=cpu uv run python dev/s8b_copy_spectrum/probe.py /tmp/s8b-weights.npz --n-train 256000
 ```
+
+Run ID `1788349170374-a97fddf7` is the original local run; run the
+256k/16000-step s8 sweep first and use your own fp32 run ID.
 
 `--n-train` must match the run so evaluation IDs remain unseen. Because the
 generator now prunes state blocks, the replayed prompts differ from the probed
-ones. The engine (`uv run fluksio serve`) serves the weights; the figure is
-written to the gitignored `figures/` directory.
+ones, and all 128 samples pass the filters today. The engine
+(`uv run fluksio serve`) serves the weights; the figure is written to the
+gitignored `figures/` directory.

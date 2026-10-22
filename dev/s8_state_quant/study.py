@@ -52,12 +52,12 @@ def _ternary(w: jax.Array) -> jax.Array:
 
 class Int8Linear(nnx.Linear):
     def __call__(self, inputs: jax.Array, out_sharding=None) -> jax.Array:
-        return inputs @ _ste(self.kernel.value, _int8)
+        return inputs @ _ste(self.kernel[...], _int8)
 
 
 class TernaryLinear(nnx.Linear):
     def __call__(self, inputs: jax.Array, out_sharding=None) -> jax.Array:
-        return inputs @ _ste(self.kernel.value, _ternary)
+        return inputs @ _ste(self.kernel[...], _ternary)
 
 
 QUANT = {"fp32": None, "int8": Int8Linear, "ternary": TernaryLinear}
@@ -280,7 +280,7 @@ if __name__ == "__main__":
     _ref = Wren(_cfg, rngs=nnx.Rngs(0))(_tok)
     assert (quantize_(Wren(_cfg, rngs=nnx.Rngs(0)), "fp32")(_tok) == _ref).all()
     assert not (_q(_tok) == _ref).all()
-    assert (_q.blocks[0].wqkv.kernel.value == _stock.blocks[0].wqkv.kernel.value).all()
+    assert (_q.blocks[0].wqkv.kernel[...] == _stock.blocks[0].wqkv.kernel[...]).all()
 
     # A ternary model trains: loss falls on a repetitive stream.
     _opt = nnx.Optimizer(_q, muon(3e-3), wrt=nnx.Param)

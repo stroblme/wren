@@ -24,11 +24,43 @@ EVAL = [
 
 @node(provides=Port("corpus", "str"))
 def corpus(copies: int = 40) -> str:
-    from wren.dataset import home_corpus
+    import random
 
-    # ty: s1 ran on the template corpus `home_corpus(copies)`, replaced in
-    # 8764546 by the state-conditioned generator; run it at 8764546~1.
-    return home_corpus(copies)  # ty: ignore[too-many-positional-arguments]
+    from wren import dataset as d
+    from wren.home import AREAS, ROOMS
+
+    # The template corpus s1 ran on, rebuilt from the phrase lists; the
+    # state-conditioned generator replaced it in 8764546.
+    lines = []
+
+    def add(phrasings: list[str], tool: str, area: str) -> None:
+        slug = area.replace(" ", "_")
+        for phrasing in phrasings:
+            command = phrasing.format(area=area, temp=21)
+            lines.append(f"{command}\n>> {tool.format(slug=slug)}\n")
+
+    for area in AREAS:
+        add(d.LIGHTS_ON, "lights.on('{slug}')", area)
+        add(d.LIGHTS_OFF, "lights.off('{slug}')", area)
+        add(d.TEMPERATURE, "sensors.temperature('{slug}')", area)
+    for room in ROOMS:
+        add(d.MEDIA_PLAY, "media.play('{slug}')", room)
+        add(d.MEDIA_STOP, "media.stop('{slug}')", room)
+        add(d.HEATING_SET, "heating.set('{slug}', 21)", room)
+        add(d.HEATING_BOOST, "heating.boost('{slug}')", room)
+        add(d.HEATING_OFF, "heating.off('{slug}')", room)
+        add(d.SHUTTERS_UP, "shutters.up('{slug}')", room)
+        add(d.SHUTTERS_DOWN, "shutters.down('{slug}')", room)
+        add(d.SHUTTERS_STOP, "shutters.stop('{slug}')", room)
+    for area in ["garden", "patio", "balcony"]:
+        add(d.WATERING_START, "watering.start('{slug}')", area)
+        add(d.WATERING_STOP, "watering.stop('{slug}')", area)
+    rng = random.Random(0)
+    out = []
+    for _ in range(copies):
+        rng.shuffle(lines)
+        out += lines
+    return "".join(out)
 
 
 @node(
@@ -74,7 +106,7 @@ def baseline(
     if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
         raise RuntimeError("no card declared: `fluksio serve --gpus 1`")
 
-    model = Wren(Config(), rngs=nnx.Rngs(seed))
+    model = Wren(Config(dim=128, n_layers=8), rngs=nnx.Rngs(seed))
     data = jnp.array(tokenizer.encode(corpus), dtype=jnp.int32)
     optimizer = nnx.Optimizer(model, optax.adamw(lr), wrt=nnx.Param)
     key = jax.random.PRNGKey(seed)

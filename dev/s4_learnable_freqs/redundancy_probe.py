@@ -111,16 +111,16 @@ def main() -> None:
     omegas = np.geomspace(1e-3, math.pi, N_POINTS)
     curves: dict[tuple[str, int, int], list[float]] = {}
     for mode, model in models.items():
-        saved = model.log_freqs.value
+        saved = model.log_freqs[...]
         for slot in SLOTS:
             for n in WINDOWS:
                 x, y = batches[n]
                 losses = []
                 for w in omegas:
-                    model.log_freqs.value = saved.at[slot].set(math.log(float(w)))
+                    model.log_freqs[...] = saved.at[slot].set(math.log(float(w)))
                     losses.append(float(_ce(model, x, y)))
                 curves[mode, slot, n] = losses
-        model.log_freqs.value = saved
+        model.log_freqs[...] = saved
 
     # Span table: near-DC region (omega < 2*pi/128, redundant at the train
     # window by the aliasing argument) and the full sweep, in nats.
@@ -182,7 +182,7 @@ def main() -> None:
                     alpha=1.0 if n == 128 else 0.65,
                     label=f"{mode}, window {n}",
                 )
-            cur = float(np.exp(np.asarray(models[mode].log_freqs.value))[slot])
+            cur = float(np.exp(np.asarray(models[mode].log_freqs[...]))[slot])
             ax.plot(
                 [cur],
                 [np.interp(cur, omegas, curves[mode, slot, 128])],

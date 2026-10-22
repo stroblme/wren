@@ -45,7 +45,6 @@ Training requires one CUDA GPU (`uv sync --group cuda12`):
 
 ```sh
 uv run python dev/s6b_head_pressure/study.py   # self-checks
-uv run fluksio sync dev/s6b_head_pressure
 uv run fluksio sweep s6b_head_pressure --param mode=shared,banded --param n_heads=4,8,16,32 --param seed=0,1,2
 uv run python dev/s6b_head_pressure/plot.py
 ```
