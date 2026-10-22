@@ -1,63 +1,69 @@
-# Wren
+<p align="center">
+  <img src="docs/wren-logo.svg" width="160" alt="Wren logo">
+</p>
 
-[![CI](https://github.com/stroblme/wren/actions/workflows/ci.yml/badge.svg)](https://github.com/stroblme/wren/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+<p align="center">
+  <a href="https://github.com/stroblme/wren/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/stroblme/wren/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+</p>
 
 Wren is a small attention-only model that reads bytes and generates tool calls
 on a CPU. Given a home's state and a command, it generates the device calls
 needed to carry out the command. The packed model is 0.8 MB and runs in ~12 MB
 of RAM. Wren is part of the [Fluksio](https://fluksio.com) automation software.
 
-Built with:
-
-- JAX, Flax and Optax: model and training
-- NumPy: the inference library
-- C: a dependency-free runtime
-- Fluksio: experiment tracking
-- uv, ruff, ty and pytest: packaging, code quality and testing
-
-## Architecture
-
-Wren is an attention-only byte decoder (a "Simple Attention Network"). It omits
-the feed-forward MLPs from standard transformer blocks and uses the saved
-parameters for more attention layers. QK normalization supports training at
-greater depths, and RoPE encodes relative positions.
-
-Attention-only models perform well when answers depend on the prompt, but are
-weaker at recalling facts from their weights. This suits Wren, which receives
-the relevant state in its context at runtime.
-
 ![Wren architecture](docs/architecture.svg)
 
-Diagram source: [docs/architecture.d2](docs/architecture.d2), rendered with `d2 docs/architecture.d2 docs/architecture.svg`.
+## Results
 
-## Layout
+Compared with [needle 2](https://cactuscompute.com/needle), the smallest
+published tool-calling model, on
+[google/mobile-actions](https://huggingface.co/datasets/google/mobile-actions)
+(all 961 eval rows, ordered strict exact match as in needle's protocol, greedy
+decoding). Wren trains on the 8,693-row train split plus ~2% synthetic
+negatives for 8000 steps (`dev/s7_bottleneck`, `dev/s8_state_quant`).
 
-```
-wren/            the package
-├── home.py      library API: generate Calls from a House and command (NumPy)
-├── runtime.py   packed ternary weights and NumPy inference
-├── model.py     the attention-only decoder and KV-cached generation (JAX)
-├── train.py     next-byte training with Muon and shared defaults
-├── dataset.py   the generated home corpus · mobile-actions · Home-Assistant-Requests
-├── eval.py      exact match, argument F1 and companion metrics
-├── flow.py      the Fluksio flow behind `wren --train`
-├── cli.py       the `wren` command
-├── wren.bin     the packed model the library runs
-└── weights.npz  fp32 weights for the CLI (git LFS)
-runtime/         export.py (npz -> wren.bin) · wren.c · the QAT weights wren.bin is made from
-dev/             one folder per study, each with its own README
-docs/            the diagram above (architecture.d2 / .svg)
-tests/           run with `uv run pytest`
-```
+| model | params | weights | peak RAM | CPU decode | exact match | arg F1 |
+|---|---|---|---|---|---|---|
+| Wren, dim 128 × 36 layers | 2.40M | 9.7 MB fp32 | 988 MB¹ | 8.9 B/s¹ | 34.8% | 44.3% |
+| Wren, dim 256 × 8 layers | 2.17M | 8.7 MB fp32 | 877 MB¹ | 25.3 B/s¹ | 30.6% | 40.1% |
+| Wren, dim 256 × 8, ternary QAT | 2.17M | 0.80 MB packed | 12.5 MB² | 1447 B/s² | 34.8% | 45.1% |
+| needle 2 | 45M | 14 MB (2-bit) | 28 MB | 500+ tok/s³ | 63.7% | — |
 
-## Getting started
+¹ JAX CPU runtime on x86, prompt processing included; most of the RAM is the
+JAX runtime. ² `runtime/wren.c`, single-threaded on x86. ³ Raspberry Pi 5, from
+the needle 2 page.
 
-Clone with [git LFS](https://git-lfs.com) installed (the CLI's fp32 weights live
-there), then run `uv sync`.
+Needle has tool schemas in context, grammar-constrained decoding and a
+115B-token pretraining corpus. Wren learns the seven tool functions in its
+weights and decodes unconstrained after training only on the task data.
 
-**Library.** The library requires only NumPy. Install it with
+Each study in `dev/` documents its question, findings and how to reproduce it:
+
+| study | question |
+|---|---|
+| [s1](dev/s1_baseline) | baseline loss and accuracy of the starting architecture |
+| [s2](dev/s2_mobile_actions) | score on the public mobile-actions benchmark |
+| [s3](dev/s3_optimizers) | AdamW vs. Muon vs. K-FAC at a fixed budget |
+| [s4](dev/s4_learnable_freqs) | learnable RoPE frequencies |
+| [s5](dev/s5_qknorm) | QK-norm and gradient variance across depth |
+| [s6](dev/s6_banded_heads), [s6b](dev/s6b_head_pressure) | per-head RoPE frequency bands |
+| [s7](dev/s7_bottleneck) | which errors limit exact match |
+| [s8](dev/s8_state_quant), [s8b](dev/s8b_copy_spectrum) | state-in-context data, ternary QAT, the copy circuit |
+
+The shipped model comes from s8.
+
+## Setup
+
+Clone with [git LFS](https://git-lfs.com) installed (the fp32 weights live
+there), then run `uv sync`. Training needs a CUDA GPU (`uv sync --group cuda12`).
+
+The library needs only NumPy:
 `pip install git+https://github.com/stroblme/wren`.
+
+## Usage
+
+**Library.**
 
 ```python
 from wren import Device, House, act
@@ -73,78 +79,47 @@ calls, confidence = act("turn on the lights in the kitchen", house)
 # [Call(tool='lights.on', args={'id': 'light.kitchen_ceiling'}, delay_s=None)], 0.96
 ```
 
-Use the trained vocabulary for areas, device kinds, and states (`wren.AREAS`,
-`wren.KINDS`; see `wren/home.py`). Device IDs can use any format.
+Areas, device kinds and states use the trained vocabulary (`wren.AREAS`,
+`wren.KINDS`). Device IDs can use any format.
 
-**Command line.** The model reads a state block followed by the command, and
-writes the calls:
+**Command line.** The model reads a state block followed by the command:
 
 ```sh
 printf '19:30 out 6C dark\nuser kitchen\nkitchen: light lk3m9 off\nturn on the lights in the kitchen\n' | uv run wren -n 40
 # >> lights.on(id='lk3m9')
 ```
 
-**C runtime.** Run the packed model directly in C:
+**C runtime.**
 
 ```sh
 cc -O3 -march=native -o wren-rt runtime/wren.c -lm
 ./wren-rt wren/wren.bin "turn on the lights in the kitchen"
-uv run python runtime/export.py runtime/weights-qat.npz wren/wren.bin  # re-export
 ```
 
-**Training.** `wren --train` runs on the project-local Fluksio engine, which
-records each run's parameters, loss curve and weights, then writes the weights
-to `wren/weights.npz`. Each flag defaults to `wren.train.DEFAULTS`:
+**Training.** Runs are tracked by a local Fluksio engine:
 
 ```sh
-uv run fluksio serve                             # the engine, in its own terminal
-uv run wren --train                              # built-in corpus
-uv run wren --train corpus.txt --steps 2000 --dim 256 --n-layers 8
+uv run fluksio serve    # in its own terminal
+uv run wren --train     # writes wren/weights.npz
 ```
 
-The shipped weights come from study s8 (`dev/s8_state_quant`), which uses more
-training steps and data than the defaults. Each study in `dev/` documents its
-question, findings and how to reproduce it.
+The library and C runtime run the packed `wren/wren.bin`, exported from
+ternary QAT weights with
+`uv run python runtime/export.py runtime/weights-qat.npz wren/wren.bin`.
 
-## Benchmark
+## Data
 
-Results as of 2026-09-01, compared with
-[needle 2](https://cactuscompute.com/needle), the smallest published
-tool-calling model, on
-[google/mobile-actions](https://huggingface.co/datasets/google/mobile-actions).
-Evaluation uses all 961 rows, ordered strict exact match (needle's protocol),
-and greedy decoding. Wren rows are fluksio `s7_bottleneck` runs (corpus=mobile,
-8000 steps, muon 3e-3, seed 0; runs `1788289190357-de0baeab` and
-`1788122526556-cb31a992`), trained on the 8,693-row train split plus ~2%
-synthetic negatives.
+Studies download their benchmarks into `data/`:
+[google/mobile-actions](https://huggingface.co/datasets/google/mobile-actions)
+(CC-BY-4.0) and
+[acon96/Home-Assistant-Requests](https://huggingface.co/datasets/acon96/Home-Assistant-Requests)
+(MIT). The shipped model is trained on the generated home corpus in
+`wren/dataset.py`.
 
-| model | params | weights | peak RAM | CPU decode | exact match | arg F1 |
-|---|---|---|---|---|---|---|
-| Wren, dim 128 × 36 layers | 2.40M | 9.7 MB fp32 | 988 MB¹ | 8.9 B/s¹ | 34.8% | 44.3% |
-| Wren, dim 256 × 8 layers | 2.17M | 8.7 MB fp32 | 877 MB¹ | 25.3 B/s¹ | 30.6% | 40.1% |
-| Wren, dim 256 × 8, ternary QAT | 2.17M | 0.80 MB packed³ | 12.5 MB³ | 1447 B/s³ | 34.8% | 45.1% |
-| needle 2 | 45M | 14 MB (2-bit) | 28 MB | 500+ tok/s² | 63.7% | — |
-
-¹ Single-stream greedy decode, prompt processing included, through the JAX CPU
-runtime on x86. Most RAM is used by the JAX runtime; the weights use ~10 MB.
-Needle's dependency-free C++ engine and 2-bit quantization-aware weights account
-for much of the memory and speed difference. At matched parameter counts, 8
-layers decode ~3× faster than 36.
-
-² Raspberry Pi 5, from the needle 2 page.
-
-³ BitNet-style quantization-aware training (`dev/s8_state_quant`, run
-`1788349172553-e26a05ad`): attention weights at 2 bits, embedding/norms fp32.
-RAM and speed measured through `runtime/wren.c` (single-threaded C, x86,
-steady-state decode; ~120 ms per request including process start and model
-load). Task metrics match or exceed the fp32 results at the same model shape and
-training budget.
-
-Protocol differences that favor needle: tool schemas in context with retrieval,
-grammar-constrained decoding, and a 115B-token pretraining corpus. Wren learns
-the seven tool functions in its weights (implicit-tool mode) and uses
-unconstrained decoding after training only on the task data.
-
-## Related Research
+## Related research
 
 - [A Controlled Study of Attention-Only Transformers](https://arxiv.org/abs/2607.18363)
+
+## License
+
+MIT
