@@ -291,6 +291,8 @@ def generate_batch(
     tokens and each row's geometric mean of generated-byte probabilities.
     """
     cfg = model.cfg
+    if not 0 < n_new < cfg.context:
+        raise ValueError(f"n_new must be in (0, {cfg.context}), got {n_new}")
     prompts = [p[-(cfg.context - n_new) :] for p in prompts]
     batch = len(prompts)
     lens = np.array([len(p) for p in prompts])

@@ -35,7 +35,7 @@ def parse_calls(text: str) -> list[Call] | None:
             ):
                 return None
             args = {kw.arg: ast.literal_eval(kw.value) for kw in expr.keywords}
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, TypeError):
             return None
         calls.append((ast.unparse(expr.func), args))
     return calls

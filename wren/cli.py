@@ -11,11 +11,15 @@ import time
 from typing import Any
 
 from wren import tokenizer
-from wren.model import WEIGHTS, generate, load
-from wren.train import DEFAULTS
 
 
 def main() -> None:
+    try:  # JAX is an optional extra; the NumPy runtime does not need it.
+        from wren.model import WEIGHTS, generate_batch, load
+        from wren.train import DEFAULTS
+    except ImportError:
+        sys.exit("the wren CLI needs the train extra: pip install 'wren[train]'")
+
     parser = argparse.ArgumentParser(prog="wren", description=__doc__)
     parser.add_argument("prompt", nargs="*", help="prompt; read from stdin if omitted")
     parser.add_argument(
@@ -28,7 +32,7 @@ def main() -> None:
     parser.add_argument(
         "-n", "--tokens", type=int, default=64, help="bytes to generate"
     )
-    parser.add_argument("-t", "--temperature", type=float, default=0.1)
+    parser.add_argument("-t", "--temperature", type=float, default=0.0)
     # `--dim`, `--steps`, `--lr`, ... — one flag per knob, from the one place
     # its default lives. Every value is sent, so the run records the whole
     # configuration rather than only what was said out loud.
@@ -45,7 +49,8 @@ def main() -> None:
         train_run(args)
         return
 
-    prompt = " ".join(args.prompt) if args.prompt else sys.stdin.read()
+    # Argv prompts end with a newline, as in the C runtime.
+    prompt = " ".join(args.prompt) + "\n" if args.prompt else sys.stdin.read()
     if not prompt.strip():
         parser.error("empty prompt")
     if not WEIGHTS.exists():
@@ -58,11 +63,18 @@ def main() -> None:
         "jax_compilation_cache_dir",
         str(pathlib.Path.home() / ".cache" / "wren" / "jax"),
     )
-    model = load(WEIGHTS)
-    # Only the tail of an over-long prompt fits the context window.
-    tokens = tokenizer.encode(prompt)[-model.cfg.context :]
-    out = generate(model, tokens, args.tokens, args.temperature)
-    sys.stdout.write(tokenizer.decode(out[len(tokens) :]))
+    tokens = tokenizer.encode(prompt)
+    [out], _ = generate_batch(
+        load(WEIGHTS),
+        [tokens],
+        args.tokens,
+        stop=(10, 10),
+        temperature=args.temperature,
+    )
+    # A blank line ends the answer; the prompt's own newline may open it.
+    if tokens[-1:] == out[:1] == [10]:
+        out = out[:1]
+    sys.stdout.write(tokenizer.decode(out))
 
 
 def train_run(args: argparse.Namespace) -> None:
@@ -73,6 +85,8 @@ def train_run(args: argparse.Namespace) -> None:
         from fluksio.sdk.client import ApiError, Client, repo_root, sync
 
         from wren import flow
+        from wren.model import WEIGHTS
+        from wren.train import DEFAULTS
     except ImportError:  # fluksio is a dev-group dependency; so is training.
         sys.exit("wren --train needs fluksio: `uv sync --group dev`")
 

@@ -82,24 +82,35 @@ def _slug(area: str) -> str:
 
 DATA = pathlib.Path("data")
 _HF = "https://huggingface.co/datasets"
+# Pinned revisions keep the benchmark files fixed.
+_MOBILE = (
+    f"{_HF}/google/mobile-actions/resolve/e920309bc2acbc2e99a5e3201cf37df2b9fd9151"
+)
+_HA = f"{_HF}/acon96/Home-Assistant-Requests/resolve/75f5abe4a3fc4f30b6ccfeb239f4da30d22b3619"
 _FILES = {
-    "mobile_actions": [f"{_HF}/google/mobile-actions/resolve/main/dataset.jsonl"],
+    "mobile_actions": [f"{_MOBILE}/dataset.jsonl"],
     "home_assistant": [
-        f"{_HF}/acon96/Home-Assistant-Requests/resolve/main/home_assistant_train.jsonl",
-        f"{_HF}/acon96/Home-Assistant-Requests/resolve/main/home_assistant_test.jsonl",
+        f"{_HA}/home_assistant_train.jsonl",
+        f"{_HA}/home_assistant_test.jsonl",
     ],
 }
 
 
 def fetch(name: str) -> list[pathlib.Path]:
-    """Download missing dataset files into `data/<name>/` and return their paths."""
+    """Download missing dataset files into `data/<name>/` and return their paths.
+
+    `data/` is relative to the current working directory.
+    """
     folder = DATA / name
     folder.mkdir(parents=True, exist_ok=True)
     paths = []
     for url in _FILES[name]:
         path = folder / url.rsplit("/", 1)[-1]
         if not path.exists():
-            urllib.request.urlretrieve(url, path)
+            # Download beside the target so an interrupted fetch leaves no file.
+            part = path.with_name(path.name + ".part")
+            urllib.request.urlretrieve(url, part)
+            part.rename(path)
         paths.append(path)
     return paths
 

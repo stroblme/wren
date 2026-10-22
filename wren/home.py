@@ -24,7 +24,7 @@ KINDS = ["light", "media", "heat", "shutter", "water"]
 ID_CHARS = "abcdefghijkmnpqrstuvwxyz23456789"  # no 0/O/1/l confusables
 
 N_NEW = 96  # bytes reserved for the answer; two calls take ~70
-BUDGET = 384 - N_NEW  # prompt bytes that fit beside them in the context
+BUDGET = 384 - N_NEW  # prompt bytes beside them in the shipped model's context
 
 
 @dataclass
@@ -116,13 +116,15 @@ def act(
     """
     pack = model or _packaged()
     aliased, ids = _aliased(house)
-    prompt = render_state(aliased, select_areas(aliased, command)) + command + "\n"
+    budget = pack["cfg"]["context"] - N_NEW
+    shown = select_areas(aliased, command, budget=budget)
+    prompt = render_state(aliased, shown) + command + "\n"
     out, probs = runtime.generate(pack, tokenizer.encode(prompt), N_NEW)
     areas = {a.replace(" ", "_"): a for a in house.areas}
     try:
         parsed = parse_calls(tokenizer.decode(out)) or []
         calls = [_call(name, args, ids, areas) for name, args in parsed]
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         calls = []
     return calls, min(probs)
 
