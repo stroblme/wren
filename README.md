@@ -108,7 +108,7 @@ uv run wren --train     # writes wren/weights.npz
 
 The library and C runtime run the packed `wren/wren.bin`, exported from
 ternary QAT weights with
-`uv run python runtime/export.py runtime/weights-qat.npz wren/wren.bin`.
+`uv run python -m wren.export runtime/weights-qat.npz wren/wren.bin`.
 
 ## Data
 

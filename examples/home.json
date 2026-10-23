@@ -19,6 +19,18 @@
     {"name": "garden_watering", "type": "bool", "value": false, "description": "sprinkler"},
     {"name": "outdoor_temperature", "type": "float", "value": 6.2, "unit": "°C", "readonly": true, "description": "temperature outside"},
     {"name": "living_room_temperature", "type": "float", "value": 20.5, "unit": "°C", "readonly": true},
-    {"name": "user_location", "type": "str", "value": "kitchen", "readonly": true, "description": "room the user is in, for lights, heating and shutters without a room"}
+    {"name": "user_location", "type": "str", "value": "kitchen", "values": ["living_room", "kitchen", "bedroom", "bathroom", "office", "garden"], "readonly": true, "description": "room the user is in, for lights, heating and shutters without a room"}
+  ],
+  "examples": [
+    {"state": {"user_location": "kitchen"}, "command": "lights on please", "calls": [["kitchen_light", true]]},
+    {"state": {"user_location": "bedroom"}, "command": "lights on please", "calls": [["bedroom_light", true]]},
+    {"state": {"user_location": "bathroom"}, "command": "turn on the light", "calls": [["bathroom_light", true]]},
+    {"state": {"user_location": "living_room"}, "command": "turn off the light", "calls": [["living_room_light", false]]},
+    {"state": {"user_location": "office"}, "command": "lights off", "calls": [["office_light", false]]},
+    {"state": {"user_location": "bedroom"}, "command": "set the heating to 21", "calls": [["bedroom_heating", 21]]},
+    {"command": "it's too dark in the kitchen", "calls": [["kitchen_light", true]]},
+    {"command": "open the awning", "calls": [["canopy", "UP"]]},
+    {"command": "close the awning in 10 minutes", "calls": [["canopy", "DOWN", 600]]},
+    {"command": "turn off all lights", "calls": [["all_lights", false]]}
   ]
 }

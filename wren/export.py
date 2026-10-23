@@ -2,10 +2,12 @@
 
 Attention kernels use {-1, 0, +1} times a scale per tensor, packed four
 weights per byte in (out, in) row order. Embeddings and norms remain fp32.
+Metadata, if given, follows as a trailer (see `wren.runtime`).
 
-    uv run python runtime/export.py runtime/weights-qat.npz wren/wren.bin
+    uv run python -m wren.export runtime/weights-qat.npz wren/wren.bin
 """
 
+import json
 import os
 import struct
 import sys
@@ -30,7 +32,8 @@ def _pack2(q: np.ndarray) -> bytes:
     ).tobytes()
 
 
-def export(npz_path: str, out_path: str) -> None:
+def export(npz_path: str, out_path: str, meta: dict | None = None) -> None:
+    """Write the pack, then `meta` as a JSON trailer unless it is empty."""
     npz = np.load(npz_path)
     cfg = {k.removeprefix("cfg:"): int(npz[k]) for k in npz.files if "cfg:" in k}
     with open(out_path, "wb") as f:
@@ -57,6 +60,9 @@ def export(npz_path: str, out_path: str) -> None:
                 q, scale = ternary(npz[f"{b}['{name}']['kernel'].value"])
                 f.write(struct.pack("<f", scale))
                 f.write(_pack2(q.T.copy()))  # (out, in) row-major
+        if meta:
+            data = json.dumps(meta).encode()
+            f.write(struct.pack("<I", len(data)) + data)
 
 
 if __name__ == "__main__":

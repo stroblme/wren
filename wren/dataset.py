@@ -1,17 +1,21 @@
-"""Generated home samples and external tool-call datasets.
+"""Generated home samples, corpora from a target list, and external datasets.
 
 Home samples pair device state with commands and deterministic target calls;
-evaluation uses device IDs absent from training. External datasets are
-downloaded on demand into `data/`.
+evaluation uses device IDs absent from training. `corpus` generates samples
+for any installation's target list. External datasets are downloaded on
+demand into `data/`.
 """
 
+import dataclasses
 import datetime
 import difflib
 import json
+import math
 import pathlib
 import random
 import re
 import urllib.request
+from collections.abc import Callable, Sequence
 
 from wren.home import (
     AREAS,
@@ -24,6 +28,11 @@ from wren.home import (
     House,
     render_state,
 )
+
+# Aliased: the home generator above uses `BUDGET` and `prompt` for its own.
+from wren.targets import BUDGET as PROMPT_BUDGET
+from wren.targets import N_NEW, Call, Target, Value, answer, parse, select
+from wren.targets import prompt as render_prompt
 
 # Each entry maps several phrasings (direct or indirect) of the same intent
 # to a single tool call, so the model sees "turn the lights on" and "it's
@@ -682,3 +691,243 @@ def commands(n_train: int = 256000) -> list[str]:
 def home_corpus() -> str:
     """Return the generated training split as text, the default for `wren --train`."""
     return to_text(home()[0])
+
+
+# ------------------------------------------------- corpus from a target list
+
+# A training sample: the command, every listed target with this sample's
+# value, and the expected calls (none: the model abstains).
+Case = tuple[str, list[Target], list[Call]]
+
+# Generic phrasings: `{w}` is a target's words, `{v}` a value as said.
+_ON = ["turn on {w}", "switch on {w}", "turn {w} on", "{w} on"]
+_OFF = ["turn off {w}", "switch off {w}", "turn {w} off", "{w} off"]
+_SET = ["set {w} to {v}", "change {w} to {v}", "{w} to {v}"]
+# A string value may be a verb ("drain the pump") or not ("shutter down").
+_PICK = [*_SET, "switch {w} to {v}", "{w} {v}", "{v} {w}"]
+_READ = ["what is {w}", "what's {w}", "check {w}", "tell me {w}"]
+# Words that take no "the" before them: "turn off all lights".
+_DETERMINERS = {"a", "all", "an", "each", "every", "the"}
+# Things a command may name that no target answers; those sharing a word
+# with a target are left out.
+_THINGS = ["alarm", "basement", "car", "cellar", "computer", "dishwasher"]
+_THINGS += ["doorbell", "fridge", "garage", "hallway", "kettle", "microscope"]
+_THINGS += ["oven", "printer", "robot", "vacuum"]
+_CHATTER = [t.format(s) for t, slots in _IRRELEVANT.items() for s in slots]
+# A delay is said in the unit `answer` writes: 60 minutes is `1h`, so "in 60
+# minutes" is never said.
+_UNITS = [("second", 1), ("minute", 60), ("hour", 3600)]
+_COUNTS = {1: [k for k in range(1, 91) if k % 60], 3600: list(range(1, 25))}
+_COUNTS[60] = _COUNTS[1]
+# Sample kinds and their shares; the share of delayed commands.
+_MIX = {"single": 50, "group": 10, "joined": 10, "unknown": 10, "chatter": 10}
+_MIX["example"] = 10
+_DELAY_SHARE = 0.2
+
+
+def corpus(
+    targets: list[Target],
+    *,
+    n: int,
+    seed: int,
+    examples: Sequence[dict] = (),
+    paraphrase: Callable[[str], list[str]] | None = None,
+) -> list[Case]:
+    """Return `n` training samples for an installation's `targets`.
+
+    Commands use generic phrasings with the words of a target's name and
+    description: on and off for a bool, a number in range, one of a string's
+    values, a question for a read-only target. Some name several targets or
+    carry a delay; about a fifth name nothing listed or are chit-chat and
+    expect no call. Each sample draws every target's value, so the model reads state
+    rather than memorising it. Samples whose calls `select` would not show,
+    or whose answer exceeds `N_NEW`, are drawn again.
+
+    `examples` are installation-supplied JSON objects for what generic
+    phrasing cannot know: `{"state": {"user_location": "kitchen"}, "command":
+    "lights on please", "calls": [["kitchen_light", true]]}`, a call being
+    `[target, value]`, `[target, value, delay_s]` or `[target]` for a read and
+    `state` optional. They make up a tenth of the samples, the targets not in
+    `state` drawn as usual; one that cannot be learnt raises ValueError.
+
+    `paraphrase(command)` returns rewordings of a command, which then stand in
+    for it; it must keep numbers as digits. It is called once per distinct
+    command, before any delay is appended.
+
+    Samples share `Target` objects of equal value, so treat them as read-only.
+    """
+    rng = random.Random(seed)
+    known = [_example(targets, e) for e in examples]
+    sayable = [t for t in targets if t.readonly or t.type != "str" or t.values]
+    settable = [t for t in sayable if not t.readonly]
+    alike: dict[tuple, list[Target]] = {}  # one phrasing says them together
+    for t in sayable:
+        key = (t.type, t.readonly, tuple(t.values or ()), tuple(t.range or ()))
+        alike.setdefault(key, []).append(t)
+    groups = [g for g in alike.values() if len(g) > 1]
+    things = [w for w in _THINGS if not select(targets, w)]
+    shares = _MIX | {
+        "group": _MIX["group"] if groups else 0,
+        "example": _MIX["example"] if known else 0,
+    }
+    kinds, weights = list(shares), list(shares.values())
+    pools = [_pool(t, rng) for t in targets]
+    widened: dict[str, list[str]] = {}
+    cases: list[Case] = []
+    while len(cases) < n:
+        state = [rng.choice(pool) for pool in pools]
+        kind = rng.choices(kinds, weights)[0]
+        if kind == "single":
+            command, calls = _clause([rng.choice(sayable)], rng)
+        elif kind == "group":
+            group = rng.choice(groups)
+            k = min(len(group), rng.choice((2, 3)))
+            command, calls = _clause(rng.sample(group, k), rng)
+        elif kind == "joined":
+            k = min(len(settable), rng.choice((2, 3)))
+            parts = [_clause([t], rng) for t in rng.sample(settable, k)]
+            command = " and ".join(c for c, _ in parts)
+            calls = [call for _, cs in parts for call in cs]
+        elif kind == "unknown":
+            command, calls = _unlisted(sayable, things, rng), []
+        elif kind == "chatter":
+            command, calls = rng.choice(_CHATTER), []
+        else:
+            command, fixed, calls = rng.choice(known)
+            state = [fixed.get(t.name, t) for t in state]
+        if paraphrase is not None:
+            if command not in widened:
+                widened[command] = paraphrase(command)
+            command = rng.choice([command, *widened[command]])
+        delayable = kind in ("single", "group") and calls[0].value is not None
+        if delayable and rng.random() < _DELAY_SHARE:
+            unit, size = rng.choice(_UNITS)
+            k = rng.choice(_COUNTS[size])
+            said = f"{k} {unit}{'s' if k > 1 else ''}"
+            if isinstance(calls[0].value, bool) and rng.random() < 0.5:
+                # A duration: the value now, the opposite once it is over.
+                command += f" for {said}"
+                calls += [Call(c.target, not c.value, k * size) for c in calls]
+            else:
+                command += f" in {said}"
+                calls = [Call(c.target, c.value, k * size) for c in calls]
+        if _learnable((command, state, calls)):
+            cases.append((command, state, calls))
+    return cases
+
+
+def text(cases: list[Case]) -> str:
+    """Join samples into training text, each exactly the prompt `act` builds
+    and its answer."""
+    return "".join(
+        render_prompt(select(targets, command), command) + answer(calls)
+        for command, targets, calls in cases
+    )
+
+
+def _example(
+    targets: list[Target], e: dict
+) -> tuple[str, dict[str, Target], list[Call]]:
+    """Read an example as (command, {name: target with its state value},
+    calls); raise ValueError if the model could not learn it from the targets
+    `select` shows."""
+    command, state = e["command"], e.get("state", {})
+    calls = [Call(*c) for c in e["calls"]]
+    fixed = {
+        t.name: dataclasses.replace(t, value=state[t.name])
+        for t in targets
+        if t.name in state
+    }
+    listed = [fixed.get(t.name, t) for t in targets]
+    out = list(answer(calls).encode())
+    if not (
+        len(fixed) == len(state)
+        and _learnable((command, listed, calls))
+        and parse(out, [1.0] * len(out), listed) == calls
+    ):
+        raise ValueError(f"example cannot be learnt: {command!r}")
+    return command, fixed, calls
+
+
+def _learnable(case: Case) -> bool:
+    """Whether the prompt fits and shows every called target, and the answer fits."""
+    command, targets, calls = case
+    shown = select(targets, command)
+    names = {t.name for t in shown}
+    return (
+        len(render_prompt(shown, command).encode()) <= PROMPT_BUDGET
+        and all(c.target in names for c in calls)
+        and len(answer(calls).encode()) <= N_NEW
+    )
+
+
+def _pool(t: Target, rng: random.Random) -> list[Target]:
+    """The variants of `t` a sample's state draws from: every bool and string
+    value, a hundred numbers."""
+    if t.type == "bool":
+        values: list = [False, True]
+    elif t.type == "str":
+        values = t.values or [t.value]
+    else:
+        values = [_draw(t, rng) for _ in range(100)]
+    return [dataclasses.replace(t, value=v) for v in values]
+
+
+def _draw(t: Target, rng: random.Random) -> Value:
+    """A value for `t`; a number without a range stays within max(10, |value|)
+    of its listed value."""
+    if t.type == "bool":
+        return rng.random() < 0.5
+    if t.type == "str":
+        return rng.choice(t.values or [t.value])
+    spread = max(10.0, abs(float(t.value)))
+    lo, hi = t.range or (float(t.value) - spread, float(t.value) + spread)
+    if t.type == "int":
+        return rng.randint(math.ceil(lo), math.floor(hi))
+    return float(min(max(round(rng.uniform(lo, hi), rng.randint(0, 1)), lo), hi))
+
+
+def _clause(targets: list[Target], rng: random.Random) -> tuple[str, list[Call]]:
+    """Say one value for `targets` of one kind: "turn on the kitchen light and
+    the bedroom light"."""
+    w = " and ".join(_noun(rng.choice(_phrases(t)), rng) for t in targets)
+    if targets[0].readonly:
+        return rng.choice(_READ).format(w=w), [Call(t.name) for t in targets]
+    value = _draw(targets[0], rng)
+    if isinstance(value, bool):
+        template = rng.choice(_ON if value else _OFF)
+    else:
+        template = rng.choice(_PICK if isinstance(value, str) else _SET)
+    return template.format(w=w, v=_said(value)), [Call(t.name, value) for t in targets]
+
+
+def _unlisted(targets: list[Target], things: list[str], rng: random.Random) -> str:
+    """A command on a thing not listed, half the time in place of a listed
+    target's last word or the words before it: "turn on the hallway light"."""
+    thing = rng.choice(things)
+    if rng.random() < 0.5:
+        *head, last = rng.choice(targets).name.split("_")
+        thing = rng.choice([f"{thing} {last}", " ".join([*head, thing])])
+    template = rng.choice([*_ON, *_OFF, *_SET, *_READ])
+    return template.format(w=_noun(thing, rng), v=rng.randint(1, 100))
+
+
+def _phrases(t: Target) -> list[str]:
+    """The name in words, and the description up to a comma if five words or
+    fewer: "canopy", "awning over the patio"."""
+    head = t.description.split(",")[0].strip().lower()
+    return [t.name.replace("_", " "), *([head] if 0 < len(head.split()) <= 5 else [])]
+
+
+def _noun(phrase: str, rng: random.Random) -> str:
+    """`phrase` after "the", or bare a quarter of the time."""
+    if phrase.split()[0] in _DETERMINERS or rng.random() < 0.25:
+        return phrase
+    return "the " + phrase
+
+
+def _said(value: Value) -> str:
+    """A value as a command says it: `21.5`, "up" for `UP`."""
+    if isinstance(value, str):
+        return value.lower().replace("_", " ")
+    return f"{value:g}" if isinstance(value, float) else str(value)

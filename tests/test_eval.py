@@ -1,5 +1,8 @@
+import math
+
 from wren.dataset import _render_mobile_actions, render_call, to_text
-from wren.eval import parse_calls, score
+from wren.eval import coverage, parse_calls, score, threshold
+from wren.targets import Call as TCall
 
 MA_ROW = {
     "metadata": "train",
@@ -139,3 +142,48 @@ def test_irrelevant_split_is_held_out():
     eval_prompts = {p.split("\n")[1] for p, _ in evals}
     assert len(evals) == 10 and not (train_prompts & eval_prompts)
     assert all(calls == [] for _, calls in train + evals)
+
+
+# Held-out samples as (predicted, expected) call lists, one pair per sample.
+HELD_OUT = [
+    ([TCall("a", True, confidence=0.95)], [TCall("a", True)]),  # right
+    ([TCall("b", 4, confidence=0.6)], [TCall("b", 3)]),  # wrong value
+    ([TCall("c", True, confidence=0.4)], []),  # should abstain
+    (  # right in another order, with a delay
+        [TCall("b", 2, 600, confidence=0.7), TCall("a", False, confidence=0.9)],
+        [TCall("a", False), TCall("b", 2, 600)],
+    ),
+    ([], []),  # abstains
+]
+PREDICTED = [p for p, _ in HELD_OUT]
+EXPECTED = [e for _, e in HELD_OUT]
+
+
+def test_threshold_meets_precision():
+    # Applied precision: 0.6 from 0.4, 0.75 from 0.6, 1.0 from 0.7.
+    assert threshold(PREDICTED, EXPECTED) == 0.7
+    assert threshold(PREDICTED, EXPECTED, precision=0.75) == 0.6
+    assert threshold(PREDICTED, EXPECTED, precision=0.5) == 0.4
+
+
+def test_threshold_counts_wrong_delay_and_extra_calls():
+    expected = [[TCall("a", True, 60)], [TCall("a", True)]]
+    predicted = [
+        [TCall("a", True, confidence=0.9)],  # missing delay
+        [TCall("a", True, confidence=0.8), TCall("b", 1, confidence=0.7)],  # extra
+    ]
+    assert threshold(predicted, expected, precision=0.5) == 0.8
+
+
+def test_threshold_unreachable_or_empty_applies_nothing():
+    wrong = [[TCall("a", True, confidence=0.9)], [TCall("b", 1, confidence=1.0)]]
+    assert threshold(wrong, [[], [TCall("b", 2)]]) == math.inf
+    assert threshold([], []) == math.inf
+    assert threshold([[], []], [[], []]) == math.inf
+
+
+def test_coverage():
+    assert coverage(PREDICTED, EXPECTED, 0.7) == 4 / 5  # never sets b to 3
+    assert coverage(PREDICTED, EXPECTED, 0.8) == 3 / 5  # drops a needed call
+    assert coverage(PREDICTED, EXPECTED, 0.3) == 3 / 5  # applies the extra call
+    assert coverage(PREDICTED, EXPECTED, math.inf) == 2 / 5  # only abstentions

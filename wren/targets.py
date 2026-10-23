@@ -198,9 +198,10 @@ def _value(target: Target, raw: str) -> Value:
     return number
 
 
-def _words(text: str) -> set[str]:
+@functools.lru_cache(maxsize=4096)  # target words repeat on every `select`
+def _words(text: str) -> frozenset[str]:
     """Lowercase words without function words, a plural `s` removed."""
     words = re.findall(r"[a-z0-9]+", text.lower())
-    return {
+    return frozenset(
         w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words if w not in _STOP
-    }
+    )

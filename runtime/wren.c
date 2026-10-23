@@ -1,9 +1,9 @@
 /* wren.c — dependency-free CPU inference for packed ternary Wren weights.
  *
- * Loads the format runtime/export.py writes (2-bit attention kernels,
- * fp32 embedding and norms), decodes greedily with a KV cache and stops
- * at a blank line. Pinned byte-for-byte against wren/runtime.py's
- * generate by tests/test_runtime.py.
+ * Loads the format wren/export.py writes (2-bit attention kernels,
+ * fp32 embedding and norms; a metadata trailer is not read), decodes
+ * greedily with a KV cache and stops at a blank line. Pinned
+ * byte-for-byte against wren/runtime.py's generate by tests/test_runtime.py.
  *
  *   cc -O3 -o wren-rt runtime/wren.c -lm
  *   ./wren-rt wren/wren.bin "turn on the lights in the kitchen"

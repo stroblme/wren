@@ -3,9 +3,14 @@
 The format has a header, fp32 embedding and final norm, then each layer's
 fp32 norm scales and attention kernels. Kernels store {-1, 0, +1} values
 at four weights per byte with a scale per tensor, in (out, in) row order.
-`runtime/export.py` writes this format; `runtime/wren.c` also reads it.
+An optional trailer holds metadata as a little-endian u32 byte count and
+that much UTF-8 JSON, such as the `targets` a model was trained on (each a
+`Target` without its value) and the recommended `threshold`.
+`wren/export.py` writes this format; `runtime/wren.c` also reads it and
+ignores the trailer.
 """
 
+import json
 import pathlib
 import struct
 
@@ -25,7 +30,10 @@ def _unpack2(raw: bytes, n: int) -> np.ndarray:
 
 
 def load_pack(path: str | pathlib.Path) -> dict:
-    """Load float32 arrays, scaling attention kernels in (out, in) order."""
+    """Load float32 arrays, scaling attention kernels in (out, in) order.
+
+    `pack["meta"]` holds the trailer's metadata, `{}` if there is none.
+    """
     with open(path, "rb") as f:
         if f.read(4) != MAGIC:
             raise ValueError(f"{path}: not a wren pack")
@@ -60,6 +68,9 @@ def load_pack(path: str | pathlib.Path) -> dict:
             layer["wqkv"] = kernel(3 * dim, dim)
             layer["wo"] = kernel(dim, dim)
             pack["layers"].append(layer)
+        pack["meta"] = {}
+        if size := f.read(4):
+            pack["meta"] = json.loads(f.read(*struct.unpack("<I", size)))
         return pack
 
 

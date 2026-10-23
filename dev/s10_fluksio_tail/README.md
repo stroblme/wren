@@ -119,7 +119,7 @@ CT2_CUDA_ALLOW_FP16=1 ~/venvs/parrot-serve/bin/python dev/s10_fluksio_tail/speec
 uv run python dev/s10_fluksio_tail/study.py   # self-checks
 uv run fluksio sweep s10_fluksio_tail --param share=0.0
 uv run fluksio sweep s10_fluksio_tail --param share=0.5 --param noisy=$PWD/data/s10/noisy.jsonl --param steps=16000,32000
-uv run python runtime/export.py weights.npz data/s10/<arm>.bin
+uv run python -m wren.export weights.npz data/s10/<arm>.bin
 uv run python dev/s10_fluksio_tail/regression.py data/s10/shipped.bin data/s10/<arm>.bin
 uv run python dev/s10_fluksio_tail/regression.py --generated data/s10/shipped.bin data/s10/<arm>.bin
 ```

@@ -1,22 +1,33 @@
-"""Check NumPy/JAX parity, matching C output, and shipped-model responses."""
+"""Check NumPy/JAX parity, C output, pack metadata and shipped-model responses."""
 
 import pathlib
 import shutil
 import struct
 import subprocess
-import sys
+from dataclasses import asdict
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from flax import nnx
 
-from wren import runtime
+from wren import export, runtime
 from wren.model import Config, Wren, save
+from wren.targets import Target
 
 RUNTIME = pathlib.Path(__file__).parent.parent / "runtime"
-sys.path.insert(0, str(RUNTIME))
-import export  # ty: ignore[unresolved-import]
+# What a pack trained on two targets carries: the targets without their
+# current values, and the recommended threshold.
+TRAINED_ON = [
+    Target("kitchen_light", "bool", False, description="ceiling light"),
+    Target("ph", "float", 7.0, range=[0, 14], unit="pH", readonly=True),
+]
+META = {
+    "targets": [
+        {k: v for k, v in asdict(t).items() if k != "value"} for t in TRAINED_ON
+    ],
+    "threshold": 0.8,
+}
 
 
 @pytest.fixture(scope="module")
@@ -28,6 +39,30 @@ def packed(tmp_path_factory):
     save(model, tmp / "weights.npz")
     export.export(str(tmp / "weights.npz"), str(tmp / "model.bin"))
     return model, runtime.load_pack(tmp / "model.bin"), tmp / "model.bin"
+
+
+@pytest.fixture(scope="module")
+def with_meta(packed):
+    """Export the same weights with a metadata trailer."""
+    path = packed[2].with_name("meta.bin")
+    export.export(str(packed[2].with_name("weights.npz")), str(path), META)
+    return path
+
+
+def test_export_appends_meta_trailer(packed, with_meta):
+    plain, data = packed[2].read_bytes(), with_meta.read_bytes()
+    assert data.startswith(plain)
+    (n,) = struct.unpack("<I", data[len(plain) : len(plain) + 4])
+    assert len(data) == len(plain) + 4 + n
+
+
+def test_load_pack_reads_meta(with_meta):
+    assert runtime.load_pack(with_meta)["meta"] == META
+
+
+def test_load_pack_without_trailer_has_empty_meta(packed):
+    assert packed[1]["meta"] == {}
+    assert runtime.load_pack(runtime.MODEL)["meta"] == {}
 
 
 def test_numpy_matches_jax_ternary_forward(packed):
@@ -72,6 +107,17 @@ def test_c_binary_matches_numpy(packed, exe):
             check=True,
         ).stdout
         assert list(got) == want, (bytes(want), got)
+
+
+def test_c_binary_ignores_meta_trailer(packed, exe, with_meta):
+    _, pack, _ = packed
+    want, _ = runtime.generate(pack, list(b"turn on the lights in the kitchen\n"), 48)
+    got = subprocess.run(
+        [str(exe), str(with_meta), "-n", "48", "turn on the lights in the kitchen"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert list(got) == want, (bytes(want), got)
 
 
 def test_c_binary_keeps_tail_of_long_prompt(packed, exe):

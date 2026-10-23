@@ -2,10 +2,16 @@
 
 Exact match requires identical function names, call order, and argument
 values. Well-formedness, name accuracy, and argument F1 measure partial
-success.
+success. For calls on targets, `threshold` recommends the confidence a
+host applies calls from and `coverage` gives the share it then gets right.
 """
 
 import ast
+import math
+
+import numpy as np
+
+from wren import targets
 
 # One tool call: function name and keyword arguments.
 Call = tuple[str, dict]
@@ -116,3 +122,49 @@ def calibration_error(
             confidence = sum(confidences[i] for i in members) / len(members)
             ece += len(members) / len(confidences) * abs(accuracy - confidence)
     return ece
+
+
+def threshold(
+    predicted: list[list[targets.Call]],
+    expected: list[list[targets.Call]],
+    precision: float = 0.99,
+) -> float:
+    """Return the lowest confidence at which applied calls reach `precision`.
+
+    A host applies each call whose confidence is at least the threshold. A
+    call is right if its sample expects it (same target, value and delay, in
+    any order), so any call on a sample that should abstain is wrong. Return
+    infinity, which applies nothing, when no threshold reaches `precision`.
+    """
+    conf, right = [], []
+    for pred, exp in zip(predicted, expected, strict=True):
+        want = {_key(c) for c in exp}
+        conf += [c.confidence for c in pred]
+        right += [_key(c) in want for c in pred]
+    conf, right = np.array(conf), np.array(right, dtype=bool)
+    for t in np.unique(conf):  # ascending
+        if right[conf >= t].mean() >= precision:
+            return float(t)
+    return math.inf
+
+
+def coverage(
+    predicted: list[list[targets.Call]],
+    expected: list[list[targets.Call]],
+    threshold: float,
+) -> float:
+    """Return the share of samples handled fully right at `threshold`.
+
+    A sample is handled right when the calls applied at the threshold are
+    exactly its expected ones: each of them and nothing else, which for a
+    sample that should abstain means no call.
+    """
+    return sum(
+        {_key(c) for c in pred if c.confidence >= threshold} == {_key(c) for c in exp}
+        for pred, exp in zip(predicted, expected, strict=True)
+    ) / len(expected)
+
+
+def _key(call: targets.Call) -> tuple:
+    """What makes two calls the same, ignoring confidence."""
+    return call.target, call.value, call.delay_s
