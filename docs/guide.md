@@ -52,6 +52,7 @@ A `Device` is a kind, your ID for it and its state.
 | `heat` | whole degrees, such as `21C` |
 | `shutter` | `up`, `down` |
 | `water` | `on`, `off` |
+| `switch` | `on`, `off` |
 
 The IDs can use any format. Wren swaps them for short aliases before the model
 sees them and maps the calls back. Areas and kinds have to come from
@@ -63,7 +64,7 @@ sees them and maps the calls back. Areas and kinds have to come from
 from wren import act
 
 calls, confidence = act("water the garden in 10m", house)
-# [Call(tool='watering.start', args={'id': 'valve.lawn'}, delay_s=600.0)], 0.97
+# [Call(tool='watering.start', args={'id': 'valve.lawn'}, delay_s=600.0)], 1.00
 ```
 
 Each `Call` has a tool name, its arguments with your device IDs, and a delay
@@ -77,6 +78,7 @@ in seconds, or `None` to run it now. The shipped model emits these tools.
 | `heating.boost`, `heating.off` | `id` | |
 | `shutters.up`, `shutters.down`, `shutters.stop` | `id` | |
 | `watering.start`, `watering.stop` | `id` | |
+| `switches.on`, `switches.off` | `id` | |
 | `sensors.temperature` | `area` | a question; your code answers it |
 
 One command can give several calls. "Coming home in 20m" boosts the living
@@ -91,24 +93,26 @@ sentence marks, numbers as digits. A speech transcript's
 ## Decide whether to act
 
 `confidence` is the lowest probability Wren gave any byte of its answer. It is
-high for the commands Wren knows and drops for the ones it does not.
+high for the commands Wren knows, including those it learned to answer with no
+call, and drops for the ones it does not.
 
 ```python
 act("order a pizza", house)
-# ([], 0.32)
+# ([], 0.97)
 ```
 
-An empty list means no call, or an answer that did not parse or named a
-device or area that is not in the house. Pick a threshold, apply the calls
-above it and pass the command on otherwise, for example to a larger language
-model. Fluksio uses 0.93 for the shipped model. The right value depends on
-your commands, so log what Wren answered and how sure it was, and set the
-threshold from your own data.
+An empty list means no call: the command needs none or names something the
+house lacks, or the answer did not parse or named a device or area that is not
+in the house. Pick a threshold, apply the calls above it and pass the command
+on otherwise, for example to a larger language model. 0.8 suits the shipped
+model ([s10](https://github.com/stroblme/wren/tree/main/dev/s10_fluksio_tail)).
+The right value depends on your commands, so log what Wren answered and how
+sure it was, and set the threshold from your own data.
 
 !!! warning
     A high confidence does not catch words outside the trained vocabulary.
-    "Turn on the lights in the hallway" turns on the kitchen light at 0.997.
-    Map such names before calling Wren, as described below.
+    "Turn on the lights in the kids room" turns on the living room light at
+    0.91. Map such names before calling Wren, as described below.
 
 ## What the model sees
 
@@ -137,19 +141,23 @@ print(render_state(house, select_areas(house, "water the garden")))
 
 The example model has a closed vocabulary. These are known gaps:
 
-- **Area names.** Only the ten names in `wren.AREAS` are understood. Others
-  are answered confidently and wrongly ("dining room" lands on the living
-  room). Rename your areas to the closest trained one, in the `House` and in
-  the command alike ("hallway" → "office").
-- **Device kinds and tools.** Only the five kinds above. Switches, covers,
-  locks or anything outside a home are not known yet.
+- **Area names.** Only the ten names in `wren.AREAS` are understood. Some
+  others get no call ("hallway", "dining room"), the rest can be answered
+  confidently and wrongly ("kids room" lands on the living room). Rename your
+  areas to the closest trained one, in the `House` and in the command alike
+  ("hallway" → "office").
+- **Device kinds and tools.** Only the six kinds above. Covers, locks or
+  anything outside a home are not known yet.
 - **One device per kind and area.** With two kitchen lights, "turn on the
   lights in the kitchen" switches only the first.
 - **Levels.** No tool takes a brightness or a position.
 - **Delays** are whole minutes ("in 2h" comes out wrong).
 - **House shape.** Every training house had a living room with a light,
-  media and heating. Leaving them out lowers the confidence, so callers fill
-  them in as placeholders and drop the calls that land on them.
+  media and heating, and a light in every area. Leaving them out lowers the
+  confidence, so callers fill them in as placeholders and drop the calls that
+  land on them.
+- **Sprinkler.** "Turn on the sprinkler" stops the watering, at 1.00. The
+  training phrasings for starting and stopping it are not symmetric.
 - **English only.**
 
 A model trained on your own installation's targets lifts most of these.

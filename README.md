@@ -51,8 +51,10 @@ Each study in `dev/` documents its question, findings and how to reproduce it:
 | [s6](dev/s6_banded_heads), [s6b](dev/s6b_head_pressure) | per-head RoPE frequency bands |
 | [s7](dev/s7_bottleneck) | which errors limit exact match |
 | [s8](dev/s8_state_quant), [s8b](dev/s8b_copy_spectrum) | state-in-context data, ternary QAT, the copy circuit |
+| [s10](dev/s10_fluksio_tail) | switches, two areas, area-less and unknown commands, recogniser noise |
 
-The shipped model comes from s8.
+The packed model (`wren/wren.bin`) comes from s10, the fp32 weights for the
+JAX command line (`wren/weights.npz`) from s8.
 
 ## Setup
 
@@ -77,7 +79,7 @@ house = House(
     areas={"kitchen": [Device("light", "light.kitchen_ceiling", "off")]},
 )
 calls, confidence = act("turn on the lights in the kitchen", house)
-# [Call(tool='lights.on', args={'id': 'light.kitchen_ceiling'}, delay_s=None)], 0.96
+# [Call(tool='lights.on', args={'id': 'light.kitchen_ceiling'}, delay_s=None)], 0.97
 ```
 
 Areas, device kinds and states use the trained vocabulary (`wren.AREAS`,

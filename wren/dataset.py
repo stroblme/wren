@@ -6,13 +6,24 @@ downloaded on demand into `data/`.
 """
 
 import datetime
+import difflib
 import json
 import pathlib
 import random
 import re
 import urllib.request
 
-from wren.home import AREAS, ID_CHARS, OUTSIDE, ROOMS, Device, House, render_state
+from wren.home import (
+    AREAS,
+    BUDGET,
+    ID_CHARS,
+    OUTSIDE,
+    PREFIX,
+    ROOMS,
+    Device,
+    House,
+    render_state,
+)
 
 # Each entry maps several phrasings (direct or indirect) of the same intent
 # to a single tool call, so the model sees "turn the lights on" and "it's
@@ -37,11 +48,16 @@ MEDIA_PLAY = [
     "play music in the {area}",
     "put some music on in the {area}",
     "it's too quiet in the {area}",
+    # s10: words the 7B panel set used that the s8 corpus lacked
+    "switch on the tv in the {area}",
+    "put the tv on in the {area}",
 ]
 MEDIA_STOP = [
     "stop the music in the {area}",
     "turn the music off in the {area}",
     "turn that off in the {area}",
+    # s10: words the 7B panel set used that the s8 corpus lacked
+    "switch off the tv in the {area}",
 ]
 
 HEATING_SET = ["set the heating in the {area} to {temp} degrees"]
@@ -49,6 +65,9 @@ HEATING_BOOST = [
     "boost the heating in the {area}",
     "it's a bit cold in the {area}",
     "it's getting cold in the {area}",
+    # s10: words the 7B panel set used that the s8 corpus lacked
+    "warm up the {area}",
+    "i'm freezing in the {area}",
 ]
 HEATING_OFF = [
     "turn off the heating in the {area}",
@@ -60,11 +79,17 @@ SHUTTERS_UP = [
     "open the rollershutters in the {area}",
     "raise the blinds in the {area}",
     "let some light into the {area}",
+    # s10: words the 7B panel set used that the s8 corpus lacked
+    "open the shutters in the {area}",
+    "raise the {area} shutters",
 ]
 SHUTTERS_DOWN = [
     "close the rollershutters in the {area}",
     "lower the blinds in the {area}",
     "the sun is too strong in the {area}",
+    # s10: words the 7B panel set used that the s8 corpus lacked
+    "close the {area} shutters",
+    "lower the shutters in the {area}",
 ]
 SHUTTERS_STOP = ["stop the rollershutters in the {area}"]
 
@@ -72,8 +97,64 @@ WATERING_START = [
     "start watering the {area}",
     "water the {area}",
     "the {area} looks dry",
+    # s10: words the 7B panel set used that the s8 corpus lacked
+    "switch on the sprinkler in the {area}",
 ]
-WATERING_STOP = ["stop watering the {area}", "that's enough water for the {area}"]
+WATERING_STOP = [
+    "stop watering the {area}",
+    "that's enough water for the {area}",
+    # s10: as above
+    "turn off the sprinkler in the {area}",
+    "shut off the water in the {area}",
+]
+
+SWITCHES_ON = [
+    "turn on the plug in the {area}",
+    "switch on the {area} socket",
+    "switch on the appliances in the {area}",
+    "power up the {area} plug",
+]
+SWITCHES_OFF = [
+    "turn off the plug in the {area}",
+    "switch off the {area} socket",
+    "switch off the appliances in the {area}",
+    "cut the power to the {area} plug",
+]
+
+# Places and things no house has, so a command naming one gets no call.
+# "attic" and "garage door" stay out, for the s10 probes.
+UNKNOWN_AREAS = [
+    "hall",
+    "hallway",
+    "basement",
+    "cellar",
+    "loft",
+    "nursery",
+    "dining room",
+    "guest room",
+    "porch",
+    "terrace",
+    "shed",
+    "studio",
+]
+UNKNOWN_DEVICES = [
+    "fridge",
+    "oven",
+    "kettle",
+    "vacuum",
+    "doorbell",
+    "alarm",
+    "printer",
+    "dishwasher",
+    "car",
+    "computer",
+]
+UNKNOWN = [
+    "turn on the {thing} in the {area}",
+    "switch off the {thing} in the {area}",
+    "start the {thing} in the {area}",
+    "turn off the {thing}",
+]
 
 
 def _slug(area: str) -> str:
@@ -264,11 +345,27 @@ _ACTIONS = {
     ("shutter", "stop"): (SHUTTERS_STOP, "shutters.stop"),
     ("water", "start"): (WATERING_START, "watering.start"),
     ("water", "stop"): (WATERING_STOP, "watering.stop"),
+    ("switch", "on"): (SWITCHES_ON, "switches.on"),
+    ("switch", "off"): (SWITCHES_OFF, "switches.off"),
 }
 
-# Area-less commands resolve through the `user <area>` state line.
+# Area-less commands resolve through the `user <area>` state line, and to the
+# living room when the user is away (fluksio without presence: always).
 AREALESS_ON = ["turn on the light", "it's too dark in here", "lights on please"]
 AREALESS_OFF = ["turn off the light", "it's too bright in here", "lights off please"]
+AREALESS = {
+    ("light", "on"): AREALESS_ON,
+    ("light", "off"): AREALESS_OFF,
+    ("heat", "boost"): ["it's a bit cold in here", "i'm cold", "warm it up a bit"],
+    ("heat", "off"): ["turn off the heating", "it's too warm in here"],
+    ("media", "play"): ["play some music", "put some music on"],
+    ("media", "stop"): ["stop the music", "turn the music off"],
+    ("shutter", "up"): ["open the blinds", "raise the shutters"],
+    ("shutter", "down"): ["close the blinds", "lower the shutters"],
+    ("switch", "on"): ["switch on the appliances", "turn on the plug"],
+    ("switch", "off"): ["switch off the appliances", "turn off the plug"],
+}
+AREALESS_SET = ["set the heating to {temp} degrees"]
 COMING_HOME = ["coming home in {m}m", "I'll be home in {m}m", "on my way, home in {m}m"]
 DINNER = [
     "set up a scene for dinner",
@@ -281,6 +378,7 @@ _STATES = {
     "media": ["on", "off"],
     "shutter": ["up", "down"],
     "water": ["on", "off"],
+    "switch": ["on", "off"],
 }
 _DELAYS = [5, 10, 15, 20, 30, 45, 60, 90]
 
@@ -289,12 +387,13 @@ def _house(rng: random.Random, avoid: set[str]) -> dict:
     """Generate a home with unique device IDs excluding `avoid`.
 
     The living room always has light, media, and heating devices. Other rooms
-    have a light and optional devices; outdoor areas have light and water.
+    have a light and optional devices; outdoor areas have light and water. Any
+    area may have a switch (a plug for an appliance).
     """
     used = set(avoid)
 
     def dev(kind: str) -> tuple[str, str]:
-        while (i := kind[0] + "".join(rng.choices(ID_CHARS, k=4))) in used:
+        while (i := PREFIX[kind] + "".join(rng.choices(ID_CHARS, k=4))) in used:
             pass
         used.add(i)
         state = (
@@ -302,14 +401,17 @@ def _house(rng: random.Random, avoid: set[str]) -> dict:
         )
         return i, state
 
-    areas = {"living room": {k: dev(k) for k in ("light", "media", "heat")}}
+    def switch() -> list[str]:
+        return ["switch"] if rng.random() < 0.25 else []
+
+    areas = {"living room": {k: dev(k) for k in ["light", "media", "heat", *switch()]}}
     for room in rng.sample([r for r in ROOMS if r != "living room"], rng.randint(1, 3)):
         kinds = ["light"] + [
             k for k in ("media", "heat", "shutter") if rng.random() < 0.4
         ]
-        areas[room] = {k: dev(k) for k in kinds}
+        areas[room] = {k: dev(k) for k in kinds + switch()}
     for spot in rng.sample(OUTSIDE, rng.randint(0, 2)):
-        areas[spot] = {"light": dev("light"), "water": dev("water")}
+        areas[spot] = {k: dev(k) for k in ["light", "water", *switch()]}
     hour = rng.randrange(24)
     return {
         "areas": areas,
@@ -342,13 +444,23 @@ def _keep(house: dict, rng: random.Random, *needed: str) -> list[str]:
 
 def _command(house: dict, rng: random.Random) -> Sample:
     """Generate a device command, optionally delayed or without an area name."""
-    if rng.random() < 0.15:  # area-less
-        if house["user"] == "away":
-            house["user"] = rng.choice(list(house["areas"]))
-        area = house["user"]
-        action = rng.choice(["on", "off"])
-        prompt = rng.choice(AREALESS_ON if action == "on" else AREALESS_OFF)
-        calls = [(f"lights.{action}", {"id": house["areas"][area]["light"][0]})]
+    if rng.random() < 0.2:  # area-less: the user's area, else the living room
+        # Away half the time: an engine without presence never knows the room.
+        house["user"] = (
+            "away" if rng.random() < 0.5 else rng.choice(list(house["areas"]))
+        )
+        area = "living room" if house["user"] == "away" else house["user"]
+        devs = house["areas"][area]
+        if "heat" in devs and rng.random() < 0.15:
+            temp = rng.randint(18, 24)
+            prompt = rng.choice(AREALESS_SET).format(temp=temp)
+            calls = [("heating.set", {"id": devs["heat"][0], "temp": temp})]
+        else:
+            kind, action = rng.choice(list(AREALESS))
+            prompt = rng.choice(AREALESS[(kind, action)])
+            # A device the area lacks gets no call, as `_missing` teaches.
+            tool = _ACTIONS[(kind, action)][1]
+            calls = [(tool, {"id": devs[kind][0]})] if kind in devs else []
     else:
         area = rng.choice(list(house["areas"]))
         kind = rng.choice(list(house["areas"][area]))
@@ -414,7 +526,7 @@ def _missing(house: dict, rng: random.Random) -> Sample:
         [
             (area, kind)
             for area, devs in house["areas"].items()
-            for kind in ("media", "heat", "shutter")
+            for kind in ("media", "heat", "shutter", "switch")
             if kind not in devs
         ]
     )
@@ -433,6 +545,37 @@ def _stateless(house: dict, rng: random.Random) -> Sample:
     return rng.choice(phrasings).format(area=area) + "\n", [(tool, {"id": _slug(area)})]
 
 
+def _pair(house: dict, rng: random.Random) -> Sample:
+    """Name two areas with the same kind of device: a call each, in the order said."""
+    where: dict[str, list[str]] = {}
+    for area, devs in house["areas"].items():
+        for kind in devs:
+            where.setdefault(kind, []).append(area)
+    kind = rng.choice([k for k, areas in where.items() if len(areas) > 1])
+    a, b = rng.sample(where[kind], 2)
+    phrasings, tool = _ACTIONS[rng.choice([k for k in _ACTIONS if k[0] == kind])]
+    prompt = rng.choice(phrasings).format(area=f"{a} and the {b}") + "\n"
+    calls = [(tool, {"id": house["areas"][area][kind][0]}) for area in (a, b)]
+    state = _render_state(house, _keep(house, rng, a, b))
+    if len((state + prompt).encode()) > BUDGET:  # no room for distractors
+        state = _render_state(house, [a, b])
+    return state + prompt, calls
+
+
+def _unknown(house: dict, rng: random.Random) -> Sample:
+    """Name a place or a thing no house has, with no target calls."""
+    if rng.random() < 0.5:
+        phrasings, _ = _ACTIONS[rng.choice(list(_ACTIONS))]
+        prompt = rng.choice(phrasings).format(area=rng.choice(UNKNOWN_AREAS))
+        keep = _keep(house, rng)
+    else:
+        area = rng.choice(list(house["areas"]))
+        thing = rng.choice(UNKNOWN_DEVICES)
+        prompt = rng.choice(UNKNOWN).format(thing=thing, area=area)
+        keep = _keep(house, rng, area)
+    return _render_state(house, keep) + prompt + "\n", []
+
+
 _BUILDERS = [
     (_command, 50),
     (_reading, 10),
@@ -441,32 +584,99 @@ _BUILDERS = [
     (_chatter, 10),
     (_missing, 5),
     (_stateless, 10),
+    (_pair, 8),
+    (_unknown, 6),
 ]
 
 
+# A command's delay suffix.
+_DELAY = re.compile(r" in \d+m$")
+
+
+def spoken(command: str) -> str:
+    """The corpus's delay shorthand as someone says it: "in 5m" -> "in 5 minutes"."""
+    return re.sub(r"\bin (\d+)m\b", r"in \1 minutes", command)
+
+
+def load_noisy(
+    path: str | pathlib.Path, min_ratio: float = 0.6
+) -> dict[str, list[str]]:
+    """Read {command: [what a recogniser heard]} from s10's `noisy.jsonl`.
+
+    A transcript sharing too few words with what was said has lost the
+    command's meaning, and is left out rather than taught as it.
+    """
+    table: dict[str, list[str]] = {}
+    for line in pathlib.Path(path).read_text().splitlines():
+        row = json.loads(line)
+        said, heard = spoken(row["command"]).split(), row["text"].split()
+        if difflib.SequenceMatcher(None, said, heard).ratio() >= min_ratio:
+            table.setdefault(row["command"], []).append(row["text"])
+    return table
+
+
+def _misheard(
+    samples: list[Sample], noisy: dict[str, list[str]], share: float, seed: int
+) -> list[Sample]:
+    """Swap `share` of the commands that come with a state for a transcript of them.
+
+    The table holds commands without their delay, which is said after the
+    transcript as a person says it.
+    """
+    rng = random.Random(seed)
+    out = []
+    for prompt, calls in samples:
+        state, _, command = prompt[:-1].rpartition("\n")
+        base = _DELAY.sub("", command)
+        if state and base in noisy and rng.random() < share:
+            prompt = (
+                f"{state}\n{rng.choice(noisy[base])}{spoken(command[len(base) :])}\n"
+            )
+        out.append((prompt, calls))
+    return out
+
+
 def home(
-    n_train: int = 8000, n_eval: int = 400, seed: int = 0
+    n_train: int = 8000,
+    n_eval: int = 400,
+    seed: int = 0,
+    noisy: dict[str, list[str]] | None = None,
+    share: float = 0.3,
 ) -> tuple[list[Sample], list[Sample]]:
     """Return (train, eval) samples, each with a generated house.
 
     Evaluation device IDs never appear in training, so exact match tests copying
-    from the state block.
+    from the state block. With `noisy` (`load_noisy`), `share` of the training
+    commands are replaced by what a recogniser heard; evaluation stays clean.
     """
     rng = random.Random(seed)
     builders, weights = zip(*_BUILDERS)
 
     def build(n: int, avoid: set[str], seen: set[str] | None) -> list[Sample]:
-        samples = []
-        for _ in range(n):
+        samples: list[Sample] = []
+        while len(samples) < n:
             house = _house(rng, avoid)
             if seen is not None:
                 seen |= house["ids"]
-            samples.append(rng.choices(builders, weights)[0](house, rng))
+            sample = rng.choices(builders, weights)[0](house, rng)
+            # A house too large for the context is drawn again (s10's switches).
+            if len(sample[0].encode()) <= BUDGET:
+                samples.append(sample)
         return samples
 
     train_ids: set[str] = set()
     train = build(n_train, set(), train_ids)
-    return train, build(n_eval, train_ids, None)
+    evals = build(n_eval, train_ids, None)
+    # Its own seed, so the clean samples are the same with or without noise.
+    return (_misheard(train, noisy, share, seed + 1) if noisy else train), evals
+
+
+def commands(n_train: int = 256000) -> list[str]:
+    """Every command of the training split that comes with a state, once and
+    without its delay (`_misheard` says that after the transcript)."""
+    train, _ = home(n_train, 0)
+    lines = {p[:-1].rpartition("\n")[2] for p, _ in train if p.count("\n") > 1}
+    return sorted({_DELAY.sub("", line) for line in lines})
 
 
 def home_corpus() -> str:

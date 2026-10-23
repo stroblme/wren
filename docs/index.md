@@ -16,9 +16,9 @@ its own.
     Wren is meant to be trained on each installation's own targets, which it
     is small enough to do on a CPU. That training path is in progress. The
     weights in the package are an example trained on homes, with ten areas
-    (living room, kitchen, garden, ...) and five kinds of device (light,
-    media, heating, shutter, watering). The [How-to](guide.md#limits) lists
-    what the example handles.
+    (living room, kitchen, garden, ...) and six kinds of device (light,
+    media, heating, shutter, watering, switch). The
+    [How-to](guide.md#limits) lists what the example handles.
 
 ## Quick start
 
@@ -39,7 +39,7 @@ house = House(
     areas={"kitchen": [Device("light", "light.kitchen_ceiling", "off")]},
 )
 calls, confidence = act("turn on the lights in the kitchen", house)
-# [Call(tool='lights.on', args={'id': 'light.kitchen_ceiling'}, delay_s=None)], 0.96
+# [Call(tool='lights.on', args={'id': 'light.kitchen_ceiling'}, delay_s=None)], 0.97
 ```
 
 Act on the calls only when `confidence` is high enough, and hand the command

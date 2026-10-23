@@ -19,8 +19,17 @@ from wren.eval import parse_calls
 ROOMS = ["living room", "kitchen", "bathroom", "bedroom", "office"]
 OUTSIDE = ["garden", "patio", "garage", "driveway", "balcony"]
 AREAS = ROOMS + OUTSIDE
-KINDS = ["light", "media", "heat", "shutter", "water"]
-# Trained device ids are the kind's initial plus four of these.
+KINDS = ["light", "media", "heat", "shutter", "water", "switch"]
+# Trained device ids are the kind's letter plus four of these. A switch is
+# `p` (plug), since `s` is the shutter's.
+PREFIX = {
+    "light": "l",
+    "media": "m",
+    "heat": "h",
+    "shutter": "s",
+    "water": "w",
+    "switch": "p",
+}
 ID_CHARS = "abcdefghijkmnpqrstuvwxyz23456789"  # no 0/O/1/l confusables
 
 N_NEW = 96  # bytes reserved for the answer; two calls take ~70
@@ -31,7 +40,7 @@ BUDGET = 384 - N_NEW  # prompt bytes beside them in the shipped model's context
 class Device:
     """Device kind, caller-provided ID, and state.
 
-    Use a kind from `KINDS`; states are on/off for light, media, and water,
+    Use a kind from `KINDS`; states are on/off for light, media, water, and switch,
     up/down for shutters, and whole degrees such as `21C` for heating.
     """
 
@@ -149,7 +158,10 @@ def _aliased(house: House) -> tuple[House, dict[str, str]]:
     for area, devices in house.areas.items():
         areas[area] = []
         for d in devices:
-            while (alias := d.kind[0] + "".join(rng.choices(ID_CHARS, k=4))) in ids:
+            while (
+                alias := PREFIX.get(d.kind, d.kind[0])
+                + "".join(rng.choices(ID_CHARS, k=4))
+            ) in ids:
                 pass
             ids[alias] = d.id
             areas[area].append(Device(d.kind, alias, d.state))

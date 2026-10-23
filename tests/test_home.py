@@ -44,12 +44,13 @@ def test_dataset_renders_through_render_state():
     """Check that shared state rendering preserves the training format."""
     house = _house(random.Random(0), set())
     assert _render_state(house, list(house["areas"])) == (
-        "18:14 out 10C dark\n"
-        "user bathroom\n"
-        "living room: light l52pi off, media mn3jr on, heat hsj2v 19C\n"
-        "bathroom: light lrdpv on\n"
-        "office: light li3ta off\n"
-        "kitchen: light lv4kz on\n"
+        "22:33 out 12C dark\n"
+        "user balcony\n"
+        "living room: light l2pis off, media m748m on, heat hsj2v 19C\n"
+        "bathroom: light ldpv7 off\n"
+        "office: light l7c4y on, shutter sv4kz up\n"
+        "kitchen: light l3qck off, media mdtyt on, shutter s8vuq down\n"
+        "balcony: light lf4b9 off, water wrc26 on, switch p467t off\n"
     )
 
 
@@ -110,7 +111,12 @@ def test_act_maps_any_id_shape():
         "office",
         {
             "office": [Device("light", "light.office_ceiling", "on")],
-            "garden": [Device("water", "3f2a9c1e-valve", "off")],
+            # Outdoor areas carry a light, as in training; without one the s10
+            # model abstains on the area (dev/s10_fluksio_tail/README.md).
+            "garden": [
+                Device("light", "light.garden", "off"),
+                Device("water", "3f2a9c1e-valve", "off"),
+            ],
         },
     )
     assert act("switch off the office lights", house)[0] == [
