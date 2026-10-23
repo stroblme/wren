@@ -1,0 +1,24 @@
+{
+  "targets": [
+    {"name": "living_room_light", "type": "bool", "value": false},
+    {"name": "kitchen_light", "type": "bool", "value": false},
+    {"name": "bedroom_light", "type": "bool", "value": true},
+    {"name": "bathroom_light", "type": "bool", "value": false},
+    {"name": "office_light", "type": "bool", "value": false},
+    {"name": "garden_light", "type": "bool", "value": false},
+    {"name": "all_lights", "type": "bool", "value": false, "description": "every light in the house"},
+    {"name": "living_room_heating", "type": "float", "value": 19.0, "range": [5, 30], "unit": "°C"},
+    {"name": "bedroom_heating", "type": "float", "value": 17.5, "range": [5, 30], "unit": "°C"},
+    {"name": "bathroom_heating", "type": "float", "value": 21.0, "range": [5, 30], "unit": "°C"},
+    {"name": "kitchen_shutter", "type": "str", "value": "UP", "values": ["UP", "DOWN", "STOP"]},
+    {"name": "bedroom_shutter", "type": "str", "value": "DOWN", "values": ["UP", "DOWN", "STOP"]},
+    {"name": "canopy", "type": "str", "value": "UP", "values": ["UP", "DOWN", "STOP"], "description": "awning over the patio"},
+    {"name": "living_room_media", "type": "str", "value": "OFF", "values": ["PLAY", "PAUSE", "OFF"], "description": "music, radio and tv"},
+    {"name": "living_room_volume", "type": "int", "value": 30, "range": [0, 100], "unit": "%"},
+    {"name": "coffee_machine", "type": "bool", "value": false, "description": "switch in the kitchen"},
+    {"name": "garden_watering", "type": "bool", "value": false, "description": "sprinkler"},
+    {"name": "outdoor_temperature", "type": "float", "value": 6.2, "unit": "°C", "readonly": true, "description": "temperature outside"},
+    {"name": "living_room_temperature", "type": "float", "value": 20.5, "unit": "°C", "readonly": true},
+    {"name": "user_location", "type": "str", "value": "kitchen", "readonly": true, "description": "room the user is in, for lights, heating and shutters without a room"}
+  ]
+}
