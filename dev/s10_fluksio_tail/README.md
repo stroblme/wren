@@ -102,13 +102,14 @@ asked), abstained (passed to the LLM).
   1.00. The added phrasings pair "switch on" with start and "turn off" with
   stop, so "turn on" reads as stop. Symmetric phrasings fix it; B32 ships
   without that rerun.
-- B32 is the shipped model since Wren 1.1.0: `runtime/weights-qat.npz`, packed
+- B32 was the shipped model of Wren 1.1.0: `runtime/weights-qat.npz`, packed
   into `wren/wren.bin`, with a recommended threshold of 0.8. The fp32
   `wren/weights.npz` the JAX CLI loads stays s8's, since no fp32 arm was
   trained.
 
 ## Reproduce
 
+The commands below run at tag `v1.1.0`.
 Training requires one CUDA GPU (`uv sync --group cuda12`), the transcripts
 need parrot's serve venv (`~/venvs/parrot-serve`). `shipped.bin` is s8's pack
 (`wren/wren.bin` at v1.0.0):

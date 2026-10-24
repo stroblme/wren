@@ -1,8 +1,10 @@
 import math
 
+from wren import targets
 from wren.dataset import _render_mobile_actions, render_call, to_text
-from wren.eval import coverage, parse_calls, score, threshold
+from wren.eval import coverage, evaluate, parse_calls, score, threshold
 from wren.targets import Call as TCall
+from wren.targets import Target
 
 MA_ROW = {
     "metadata": "train",
@@ -187,3 +189,29 @@ def test_coverage():
     assert coverage(PREDICTED, EXPECTED, 0.8) == 3 / 5  # drops a needed call
     assert coverage(PREDICTED, EXPECTED, 0.3) == 3 / 5  # applies the extra call
     assert coverage(PREDICTED, EXPECTED, math.inf) == 2 / 5  # only abstentions
+
+
+def test_evaluate_takes_the_higher_threshold_of_generated_and_tests(monkeypatch):
+    replies = {
+        "g1": [TCall("a", True, confidence=0.5)],
+        "g2": [TCall("b", 1, confidence=0.9)],
+        "t1": [TCall("a", False, confidence=0.7)],  # a confident wrong call
+        "t2": [TCall("a", True, confidence=0.8)],
+    }
+    monkeypatch.setattr(targets, "act", lambda command, state, model: replies[command])
+    state = [Target("a", "bool", False), Target("b", "int", 0)]
+    generated = [("g1", state, [TCall("a", True)]), ("g2", state, [TCall("b", 1)])]
+    tests = [("t1", state, [TCall("a", True)]), ("t2", state, [TCall("a", True)])]
+
+    assert evaluate({}, generated) == {
+        "exact_match": 1.0,
+        "threshold": 0.5,
+        "coverage": 1.0,
+    }
+    assert evaluate({}, generated, tests=tests) == {
+        "exact_match": 1.0,
+        "threshold": 0.8,  # the tests', above their wrong call
+        "coverage": 0.5,  # g1 is no longer applied
+        "test_exact_match": 0.5,
+        "test_coverage": 0.5,
+    }

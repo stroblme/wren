@@ -6,8 +6,8 @@
  * byte-for-byte against wren/runtime.py's generate by tests/test_runtime.py.
  *
  *   cc -O3 -o wren-rt runtime/wren.c -lm
- *   ./wren-rt wren/wren.bin "turn on the lights in the kitchen"
- *   echo "<state block + prompt>" | ./wren-rt wren/wren.bin -n 96
+ *   ./wren-rt wren/wren.bin "$(printf 'kitchen_light=false\nturn on the kitchen light')"
+ *   printf '<target lines>\n<command>\n' | ./wren-rt wren/wren.bin -n 96
  *
  * ponytail: single-threaded, kernels unpacked to scale-folded floats in
  * RAM (~8 MB); SIMD intrinsics and in-register 2-bit unpacking are the

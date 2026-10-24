@@ -1,40 +1,79 @@
 """Command line interface for inference and training.
 
-`wren <prompt>` or piped input runs the shipped weights. `wren --train
-home.json` runs the Fluksio training flow on an installation's targets and
-examples and writes the model's pack beside it, as `home.bin`.
+`wren "turn on the kitchen light"`, or the command on stdin, runs `act` with
+a pack on an installation's targets and prints each call with its
+confidence. By default it runs the shipped demo model on the demo home it
+learnt (`wren/home.json`). `wren --train home.json` runs the Fluksio training
+flow on an installation's targets, examples and tests and writes the model's
+pack beside it, as `home.bin`.
 """
 
 import argparse
+import json
 import pathlib
 import sys
 import time
 from typing import Any
 
-from wren import tokenizer
+from wren import runtime
+from wren.targets import Target, act, answer
 
 
-def main() -> None:
-    try:  # JAX is an optional extra; the NumPy runtime does not need it.
-        from wren.model import WEIGHTS, generate_batch, load
-        from wren.train import DEFAULTS
-    except ImportError:
-        sys.exit("the wren CLI needs the train extra: pip install 'wren[train]'")
-
+def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(prog="wren", description=__doc__)
-    parser.add_argument("prompt", nargs="*", help="prompt; read from stdin if omitted")
+    parser.add_argument(
+        "command", nargs="*", help="command; read from stdin if omitted"
+    )
+    parser.add_argument(
+        "--targets",
+        metavar="JSON",
+        type=pathlib.Path,
+        default=runtime.DEMO,
+        help="installation whose targets the command acts on (default: the demo home)",
+    )
+    parser.add_argument(
+        "--model",
+        metavar="BIN",
+        type=pathlib.Path,
+        default=runtime.MODEL,
+        help="pack to run (default: the demo model)",
+    )
     parser.add_argument(
         "--train",
         metavar="JSON",
-        help="train on an installation's targets and examples; write the pack as .bin",
+        help="train on an installation's targets, examples and tests; write the "
+        "pack as .bin (`wren --train JSON --help` lists the training flags)",
     )
-    parser.add_argument(
-        "-n", "--tokens", type=int, default=64, help="bytes to generate"
-    )
-    parser.add_argument("-t", "--temperature", type=float, default=0.0)
-    # `--dim`, `--steps`, `--lr`, ... — one flag per knob, from the one place
-    # its default lives. Every value is sent, so the run records the whole
-    # configuration rather than only what was said out loud.
+    # `--dim`, `--steps`, ... come from `fit`, whose module needs JAX, so
+    # only a training command gets them.
+    if any(arg.split("=")[0] == "--train" for arg in argv):
+        add_knobs(parser)
+    args = parser.parse_args(argv)
+
+    if args.train is not None:
+        train_run(args)
+        return
+
+    command = " ".join(args.command) or sys.stdin.read().strip()
+    if not command:
+        parser.error("empty command")
+    targets = [Target(**t) for t in json.loads(args.targets.read_text())["targets"]]
+    calls = act(command, targets, model=runtime.load_pack(args.model))
+    for call in calls:
+        print(f"{answer([call]).strip()}  {call.confidence:.2f}")
+    if not calls:
+        print("not handled")
+
+
+def add_knobs(parser: argparse.ArgumentParser) -> None:
+    """Add one `--flag` per training knob, from the one place its default lives."""
+    try:
+        from wren.train import DEFAULTS
+    except ImportError:
+        sys.exit("wren --train needs the train extra: pip install 'wren[train]'")
+    # Every value is sent, so the run records the whole configuration rather
+    # than only what was said out loud.
     for name, default in DEFAULTS.items():
         parser.add_argument(
             f"--{name.replace('_', '-')}",
@@ -42,38 +81,6 @@ def main() -> None:
             default=default,
             help=f"training: {name} (default: %(default)s)",
         )
-    args = parser.parse_args()
-
-    if args.train is not None:
-        train_run(args)
-        return
-
-    # Argv prompts end with a newline, as in the C runtime.
-    prompt = " ".join(args.prompt) + "\n" if args.prompt else sys.stdin.read()
-    if not prompt.strip():
-        parser.error("empty prompt")
-    if not WEIGHTS.exists():
-        parser.error(f"no weights at {WEIGHTS}; run `wren --train` first")
-    # Persist compiled programs across invocations: the generation loop
-    # otherwise recompiles on every CLI start, dwarfing the generation.
-    import jax
-
-    jax.config.update(
-        "jax_compilation_cache_dir",
-        str(pathlib.Path.home() / ".cache" / "wren" / "jax"),
-    )
-    tokens = tokenizer.encode(prompt)
-    [out], _ = generate_batch(
-        load(WEIGHTS),
-        [tokens],
-        args.tokens,
-        stop=(10, 10),
-        temperature=args.temperature,
-    )
-    # A blank line ends the answer; the prompt's own newline may open it.
-    if tokens[-1:] == out[:1] == [10]:
-        out = out[:1]
-    sys.stdout.write(tokenizer.decode(out))
 
 
 def train_run(args: argparse.Namespace) -> None:
@@ -115,11 +122,14 @@ def train_run(args: argparse.Namespace) -> None:
 
     out = installation.with_suffix(".bin")
     out.write_bytes(pack)
-    result = handle.result
+    result, meta = handle.result, runtime.load_pack(out)["meta"]
+    tests = meta.get("test_exact_match")
     log(
         f"{result['n_params']:,.0f} params, final loss {result['final_loss']:.3f}, "
-        f"held-out exact match {result['exact_match']:.1%}, coverage "
-        f"{result['coverage']:.1%} at threshold {result['threshold']:.2f}; saved {out}"
+        f"held-out exact match {result['exact_match']:.1%}"
+        + ("" if tests is None else f", tests {tests:.1%}")
+        + f", coverage {result['coverage']:.1%} at threshold "
+        f"{result['threshold']:.2f}; saved {out}"
     )
 
 

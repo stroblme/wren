@@ -4,11 +4,13 @@ Exact match requires identical function names, call order, and argument
 values. Well-formedness, name accuracy, and argument F1 measure partial
 success. For calls on targets, `threshold` recommends the confidence a
 host applies calls from and `coverage` gives the share it then gets right;
-`evaluate` runs a pack on samples and reports both.
+`evaluate` runs a pack on generated samples and an installation's test
+commands and reports both.
 """
 
 import ast
 import math
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -170,20 +172,40 @@ def evaluate(
     pack: dict,
     cases: list[tuple[str, list[targets.Target], list[targets.Call]]],
     precision: float = 0.99,
+    tests: Sequence[tuple[str, list[targets.Target], list[targets.Call]]] = (),
 ) -> dict[str, float]:
     """Run `act` with `pack` on (command, targets, expected calls) samples.
 
+    `cases` are generated samples, `tests` an installation's own commands.
+    The threshold is the higher of the two `threshold` recommends at
+    `precision`, so applied calls reach it on both: pooled into a thousand
+    generated samples, a few tests' wrong calls would fit in the allowance.
     Return the exact match (every call right, no other, at any confidence),
-    the threshold recommended at `precision` and the coverage there.
+    the threshold and the coverage there, and with tests their exact match
+    and coverage as `test_exact_match` and `test_coverage`.
     """
-    predicted = [targets.act(c, state, model=pack) for c, state, _ in cases]
-    expected = [calls for _, _, calls in cases]
+    predicted, expected = _run(pack, cases)
+    tested, wanted = _run(pack, tests)
     t = threshold(predicted, expected, precision)
-    return {
+    if tests:
+        t = max(t, threshold(tested, wanted, precision))
+    scores = {
         "exact_match": coverage(predicted, expected, 0.0),
         "threshold": t,
         "coverage": coverage(predicted, expected, t),
     }
+    if tests:
+        scores["test_exact_match"] = coverage(tested, wanted, 0.0)
+        scores["test_coverage"] = coverage(tested, wanted, t)
+    return scores
+
+
+def _run(
+    pack: dict, cases: Sequence
+) -> tuple[list[list[targets.Call]], list[list[targets.Call]]]:
+    """The calls `act` returns on each sample and the calls it expects."""
+    predicted = [targets.act(c, state, model=pack) for c, state, _ in cases]
+    return predicted, [calls for _, _, calls in cases]
 
 
 def _key(call: targets.Call) -> tuple:

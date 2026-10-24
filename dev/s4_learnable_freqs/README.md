@@ -44,6 +44,7 @@ seed-0 weights, it evaluates held-out loss along slot 8 (in-band) and slot 18
 
 ## Reproduce
 
+The commands below run at tag `v1.1.0` (and `v1.0.0`).
 Training requires one CUDA GPU (`uv sync --group cuda12`):
 
 ```sh

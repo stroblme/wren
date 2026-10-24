@@ -1,57 +1,60 @@
 # Wren
 
 Wren is a small attention-only model that reads bytes and turns a short
-command into tool calls, on a CPU. You give it the current state of the
-things it may act on and a command such as "turn on the lights in the
-kitchen", and it answers with the calls that carry the command out. The
-packed model is 0.8 MB, runs in about 12 MB of RAM and needs only NumPy.
+command into calls on a fixed set of targets, on a CPU. You list the things a
+command may act on, such as lights, a heating setpoint or a pump, with their
+current values. Given "close the awning in 10 minutes", Wren answers
+`set(canopy, DOWN) in 10m`, with a confidence for each call. A model answers
+in about 0.05 s, needs only NumPy and packs into about half a megabyte.
 
-Wren is meant for the commands people give again and again. These should be
-answered in a tenth of a second, without a GPU or a network. A larger language
-model can take whatever Wren is unsure of. Wren is part of the
+Wren is meant for the commands people give again and again, on one
+installation. Each installation trains its own model, which takes about 40
+minutes on a CPU. Questions and anything else Wren is unsure of go to a
+larger language model that you run beside it. Wren is part of the
 [Fluksio](https://fluksio.com) automation software, but the library stands on
 its own.
-
-!!! note "The shipped weights are an example"
-    Wren is meant to be trained on each installation's own targets, which it
-    is small enough to do on a CPU. That training path is in progress. The
-    weights in the package are an example trained on homes, with ten areas
-    (living room, kitchen, garden, ...) and six kinds of device (light,
-    media, heating, shutter, watering, switch). The
-    [How-to](guide.md#limits) lists what the example handles.
 
 ## Quick start
 
 ```sh
 pip install git+https://github.com/stroblme/wren
+wren "turn on the kitchen light"
+# >> set(kitchen_light, true)  1.00
 ```
 
 The `wren` package on PyPI is an unrelated project.
 
-```python
-from wren import Device, House, act
+The package ships a demo model trained on a home with 20 targets
+(`wren/home.json`), which the command line uses by default. For your own
+installation, describe its targets in a JSON file, add examples and tests,
+and train:
 
-house = House(
-    "19:30",
-    outdoor_c=6,
-    dark=True,
-    user_area="kitchen",
-    areas={"kitchen": [Device("light", "light.kitchen_ceiling", "off")]},
-)
-calls, confidence = act("turn on the lights in the kitchen", house)
-# [Call(tool='lights.on', args={'id': 'light.kitchen_ceiling'}, delay_s=None)], 0.97
+```python
+import json
+
+from wren import Target, act, load_pack
+from wren.train import fit  # needs the train extra
+
+home = json.load(open("home.json"))
+targets = [Target(**t) for t in home["targets"]]
+fit(targets, out="home.bin", examples=home["examples"], tests=home["tests"])
+
+model = load_pack("home.bin")
+calls = act("close the awning in 10 minutes", targets, model=model)
+applied = [c for c in calls if c.confidence >= model["meta"]["threshold"]]
 ```
 
-Act on the calls only when `confidence` is high enough, and hand the command
-to something else otherwise. The [How-to](guide.md) explains each step.
+Apply the calls at or above the model's threshold and hand the command on
+otherwise. The [How-to](guide.md) explains each step.
 
 ## How it works
 
 Wren is an attention-only byte-level decoder: transformer blocks without the
 feed-forward layers, with the saved parameters spent on more attention
 layers. Such models are weak at facts stored in their weights and good at
-copying from their context, which suits a model that gets the device state in
-its prompt. The weights are ternary and packed for the NumPy and C runtimes.
+copying from their context, which suits a model that gets the targets and
+their values in its prompt. The weights are ternary and packed for the NumPy
+and C runtimes.
 
 ![Wren architecture](architecture.svg)
 

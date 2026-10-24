@@ -4,8 +4,8 @@
 
 Each installation trains its own model from its target list
 (`wren.train.fit`). How many steps, and which shape, does the demo home
-(`examples/home.json`, 20 targets, 31 examples) need on a CPU, how long does
-that take, and does a prompt that shows fewer targets help?
+(`examples/home.json` at `v1.1.0`, 20 targets, 31 examples) need on a CPU,
+how long does that take, and does a prompt that shows fewer targets help?
 
 ## Method
 
@@ -81,4 +81,7 @@ uv run fluksio sweep s12_cpu_fit --param batch_size=16 --param steps=5000 --para
 uv run wren --train examples/home.json   # fit at its defaults -> examples/home.bin
 ```
 
+The numbers above come from tag `v1.1.0`. At HEAD the study runs on the
+demo home in `wren/home.json`, which has since gained examples and tests, and
+the last line is `uv run wren --train wren/home.json` (writes `wren/home.bin`).
 `--max-runs 1` keeps runs from sharing the CPU, whose wall time is measured.

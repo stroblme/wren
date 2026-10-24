@@ -33,13 +33,14 @@ blocks to relevant areas.
   Packed attention weights: 8.66 → 2.37 → 0.80 MB. With pruned blocks, fp32
   reaches 91.0% exact and ternary 89.8%, both 99.7% ID-copy. Each configuration
   uses one seed.
-- The pruned fp32 run is `wren/weights.npz`. The pruned ternary run
-  (`runtime/weights-qat.npz`) packs into `wren/wren.bin`, run by the library
-  and `runtime/wren.c` (12.5 MB RSS, 1447 B/s in C). A mobile ternary run is
-  the README's QAT row.
+- The pruned fp32 run was `wren/weights.npz` until Wren 2.0. The pruned
+  ternary run (`runtime/weights-qat.npz`) packed into `wren/wren.bin`, run by
+  the library and `runtime/wren.c` (12.5 MB RSS, 1447 B/s in C). A mobile
+  ternary run is the README's QAT row.
 
 ## Reproduce
 
+The commands below run at tag `v1.1.0` (and `v1.0.0`).
 Training requires one CUDA GPU (`uv sync --group cuda12`):
 
 ```sh

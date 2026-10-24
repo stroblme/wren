@@ -18,14 +18,14 @@ import optax
 from flax import nnx
 
 from wren import runtime, tokenizer
-from wren.dataset import corpus, text
+from wren.dataset import as_case, corpus, text
 from wren.eval import evaluate
 from wren.export import export
 from wren.model import Config, Wren, save
 from wren.targets import Target
 
 
-def muon(lr: float) -> optax.GradientTransformation:
+def muon(lr: optax.ScalarOrSchedule) -> optax.GradientTransformation:
     """Apply Muon to attention matrices and its inner AdamW to embeddings and norms."""
 
     def hidden_matrices(params: dict) -> dict:
@@ -79,10 +79,13 @@ def train(
 ) -> list[float]:
     """Train the model in place and return the loss at each step.
 
-    Call `on_log(step, loss)` after every step if provided.
+    The learning rate decays from `lr` to zero along a cosine, so the run
+    ends settled rather than wherever the last noisy step left it. Call
+    `on_log(step, loss)` after every step if provided.
     """
     data = jnp.array(tokenizer.encode(text), dtype=jnp.int32)
-    optimizer = nnx.Optimizer(model, muon(lr), wrt=nnx.Param)
+    schedule = optax.cosine_decay_schedule(lr, steps)
+    optimizer = nnx.Optimizer(model, muon(schedule), wrt=nnx.Param)
     key = jax.random.PRNGKey(0)
     losses = []
     for step in range(steps):
@@ -100,6 +103,8 @@ def fit(
     *,
     out: str | pathlib.Path,
     examples: Sequence[dict] = (),
+    tests: Sequence[dict] = (),
+    paraphrase: Callable[[str], list[str]] | None = None,
     dim: int = 256,
     n_layers: int = 4,
     n_heads: int = 4,
@@ -115,18 +120,26 @@ def fit(
     """Train a model for an installation's `targets` and write its pack to `out`.
 
     Trains from scratch, quantization-aware, on `n_train` samples of
-    `wren.dataset.corpus` (with the installation's `examples`), then runs
-    `act` with the pack on `n_eval` held-out samples drawn with seed + 1. The
-    pack's metadata holds the targets without their values, the threshold
-    `wren.eval.threshold` recommends at `precision`, the steps and the date.
-    Raise RuntimeError and write nothing if no threshold reaches `precision`.
+    `wren.dataset.corpus` (with the installation's `examples`, widened by
+    `paraphrase` if given; the held-out samples are not), then runs
+    `act` with the pack on `n_eval` held-out samples drawn with seed + 1 and
+    on the installation's `tests` (shaped like `examples`, never trained on).
+    The threshold is the higher of those `wren.eval.threshold` recommends at
+    `precision` on each (`wren.eval.evaluate`). The pack's metadata holds the
+    targets without their values, the threshold, the tests' exact match, the
+    steps and the date. Raise RuntimeError and write nothing if no threshold
+    reaches `precision`.
 
-    Return the held-out exact match, threshold and coverage, the final
-    loss, the parameter count and the wall time in seconds.
+    Return the held-out exact match, threshold and coverage, the tests'
+    exact match and coverage if given, the final loss, the parameter count
+    and the wall time in seconds.
     """
     start = datetime.datetime.now(datetime.UTC)
-    cases = corpus(targets, n=n_train, seed=seed, examples=examples)
+    cases = corpus(
+        targets, n=n_train, seed=seed, examples=examples, paraphrase=paraphrase
+    )
     held_out = corpus(targets, n=n_eval, seed=seed + 1, examples=examples)
+    tested = [as_case(targets, t) for t in tests]
     cfg = Config(dim=dim, n_layers=n_layers, n_heads=n_heads, ternary=True)
     model = Wren(cfg, rngs=nnx.Rngs(seed))
     losses = train(
@@ -142,11 +155,12 @@ def fit(
         weights, pack = pathlib.Path(tmp, "weights.npz"), pathlib.Path(tmp, "wren.bin")
         save(model, weights)
         export(str(weights), str(pack))
-        scores = evaluate(runtime.load_pack(pack), held_out, precision)
+        scores = evaluate(runtime.load_pack(pack), held_out, precision, tested)
         if math.isinf(scores["threshold"]):
             raise RuntimeError(
                 f"no threshold reaches precision {precision} on {n_eval} held-out "
-                f"samples (exact match {scores['exact_match']:.1%}); not writing {out}"
+                f"samples and {len(tested)} tests (exact match "
+                f"{scores['exact_match']:.1%}); not writing {out}"
             )
         meta = {
             "targets": [
@@ -158,6 +172,8 @@ def fit(
             "steps": steps,
             "date": start.date().isoformat(),
         }
+        if tested:
+            meta["test_exact_match"] = scores["test_exact_match"]
         export(str(weights), str(out), meta)
     seconds = (datetime.datetime.now(datetime.UTC) - start).total_seconds()
     return scores | {

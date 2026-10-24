@@ -1,14 +1,11 @@
-"""Wren's NumPy inference API. Training requires the `train` extra."""
+"""Wren turns short commands on an installation's targets into calls.
 
-from wren.home import AREAS, KINDS, Call, Device, House, act, render_state, select_areas
+`act(command, targets, model=load_pack(path))` runs a trained pack in NumPy;
+without `model` it runs the shipped demo model. Training (`wren.train.fit`)
+requires the `train` extra.
+"""
 
-__all__ = [
-    "AREAS",
-    "KINDS",
-    "Call",
-    "Device",
-    "House",
-    "act",
-    "render_state",
-    "select_areas",
-]
+from wren.runtime import load_pack
+from wren.targets import Call, Target, act
+
+__all__ = ["Call", "Target", "act", "load_pack"]

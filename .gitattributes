@@ -1,2 +1,0 @@
-wren/weights.npz filter=lfs diff=lfs merge=lfs -text
-runtime/weights-qat.npz filter=lfs diff=lfs merge=lfs -text

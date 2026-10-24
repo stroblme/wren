@@ -4,7 +4,7 @@ Attention kernels use {-1, 0, +1} times a scale per tensor, packed four
 weights per byte in (out, in) row order. Embeddings and norms remain fp32.
 Metadata, if given, follows as a trailer (see `wren.runtime`).
 
-    uv run python -m wren.export runtime/weights-qat.npz wren/wren.bin
+    uv run python -m wren.export weights.npz wren.bin
 """
 
 import json

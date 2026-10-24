@@ -39,6 +39,7 @@ default 128 samples passed the span and context filters at the time; the
 
 ## Reproduce
 
+The commands below run at tag `v1.1.0` (and `v1.0.0`).
 Runs on CPU:
 
 ```sh

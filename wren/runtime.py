@@ -20,6 +20,7 @@ MAGIC, VERSION = b"WREN", 1
 EPS = 1e-6  # flax RMSNorm epsilon
 NEWLINE = 10
 MODEL = pathlib.Path(__file__).parent / "wren.bin"  # the packaged model
+DEMO = pathlib.Path(__file__).parent / "home.json"  # the installation it learnt
 
 
 def _unpack2(raw: bytes, n: int) -> np.ndarray:

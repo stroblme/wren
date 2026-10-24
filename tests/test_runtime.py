@@ -1,5 +1,6 @@
 """Check NumPy/JAX parity, C output, pack metadata and shipped-model responses."""
 
+import json
 import pathlib
 import shutil
 import struct
@@ -62,7 +63,14 @@ def test_load_pack_reads_meta(with_meta):
 
 def test_load_pack_without_trailer_has_empty_meta(packed):
     assert packed[1]["meta"] == {}
-    assert runtime.load_pack(runtime.MODEL)["meta"] == {}
+
+
+def test_packaged_model_carries_its_installation():
+    meta = runtime.load_pack(runtime.MODEL)["meta"]
+    demo = json.loads(runtime.DEMO.read_text())["targets"]
+    assert [t["name"] for t in meta["targets"]] == [t["name"] for t in demo]
+    assert 0 < meta["threshold"] < 1
+    assert 0 < meta["test_exact_match"] <= 1
 
 
 def test_numpy_matches_jax_ternary_forward(packed):
@@ -176,36 +184,24 @@ def test_load_pack_rejects_bad_magic(tmp_path):
         runtime.load_pack(path)
 
 
-# Held-out prompts (dataset.home() eval split) and the reference outputs of
-# the shipped wren.bin.
+# Prompts as `act` builds them on the demo home, and the shipped model's
+# answers: a delayed set, a number among several heating targets, a reading
+# and a command it must pass on.
 REFERENCE = [
+    ("canopy=UP\nclose the awning in 10 minutes\n", ">> set(canopy, DOWN) in 10m\n\n"),
     (
         (
-            "11:35 out 27C bright\nuser living room\nbathroom: light lzi6n off\n"
-            "bedroom: light lxhnv off, shutter sv8xr down\n"
-            "it's too bright in the bathroom\n"
+            "bedroom_light=true\nliving_room_heating=19\nbedroom_heating=17.5\n"
+            "bathroom_heating=21\nbedroom_shutter=DOWN\nuser_location=kitchen\n"
+            "set the bedroom heating to 21\n"
         ),
-        ">> lights.off(id='lzi6n')\n\n",
+        ">> set(bedroom_heating, 21)\n\n",
     ),
     (
-        (
-            "23:17 out 8C dark\nuser away\n"
-            "living room: light ldf4m off, media mc5nc on, heat h3j2h 20C\n"
-            "kitchen: light leaem off, shutter skscq up\n"
-            "bathroom: light ln59c on, media mb6ca off, heat h4thd 20C, "
-            "shutter sd3hn down\ncoming home in 20m\n"
-        ),
-        ">> heating.boost(id='h3j2h')\n>> lights.on(delay='20m', id='ldf4m')\n\n",
+        "outdoor_temperature=6.2\nwhat is the outdoor temperature\n",
+        ">> read(outdoor_temperature)\n\n",
     ),
-    (
-        (
-            "21:22 out 18C dark\nuser kitchen\n"
-            "living room: light l789e off, media m9q7d off, heat h6ww5 23C\n"
-            "office: light lngrm on, heat hhvji 18C, shutter swbuj up\n"
-            "turn that off in the office\n"
-        ),
-        "\n",
-    ),
+    ("what is the capital of France\n", "\n"),
 ]
 
 
@@ -215,3 +211,14 @@ def test_packaged_model_reproduces_reference(prompt, want):
     out, probs = runtime.generate(pack, list(prompt.encode()), 96)
     assert bytes(out).decode() == want
     assert len(probs) == len(out) and all(0 < p <= 1 for p in probs)
+
+
+@pytest.mark.parametrize(("prompt", "want"), REFERENCE)
+def test_c_binary_reproduces_reference(exe, prompt, want):
+    got = subprocess.run(
+        [str(exe), str(runtime.MODEL)],
+        input=prompt.encode(),
+        capture_output=True,
+        check=True,
+    ).stdout
+    assert got.decode() == want

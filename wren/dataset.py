@@ -1,14 +1,13 @@
-"""Generated home samples, corpora from a target list, and external datasets.
+"""Training samples from an installation's target list, and external datasets.
 
-Home samples pair device state with commands and deterministic target calls;
-evaluation uses device IDs absent from training. `corpus` generates samples
-for any installation's target list. External datasets are downloaded on
-demand into `data/`.
+`corpus` generates samples for any installation's target list; `as_case`
+reads an example-shaped record as one, and `from_log` turns a host's log
+into examples. The external benchmarks (google/mobile-actions,
+Home-Assistant-Requests) are downloaded on demand into `data/`.
 """
 
 import dataclasses
 import datetime
-import difflib
 import json
 import math
 import pathlib
@@ -17,158 +16,10 @@ import re
 import urllib.request
 from collections.abc import Callable, Sequence
 
-from wren.home import (
-    AREAS,
-    BUDGET,
-    ID_CHARS,
-    OUTSIDE,
-    PREFIX,
-    ROOMS,
-    Device,
-    House,
-    render_state,
-)
-
-# Aliased: the home generator above uses `BUDGET` and `prompt` for its own.
+# Aliased: the benchmark loaders below name a sample's text `prompt`.
 from wren.targets import BUDGET as PROMPT_BUDGET
 from wren.targets import N_NEW, Call, Target, Value, answer, parse, select
 from wren.targets import prompt as render_prompt
-
-# Each entry maps several phrasings (direct or indirect) of the same intent
-# to a single tool call, so the model sees "turn the lights on" and "it's
-# too dark in here" both resolve to `lights.on`.
-LIGHTS_ON = [
-    "turn on the lights in the {area}",
-    "switch on the {area} lights",
-    "it's too dark in the {area}",
-]
-LIGHTS_OFF = [
-    "turn off the lights in the {area}",
-    "switch off the {area} lights",
-    "it's too bright in the {area}",
-]
-TEMPERATURE = [
-    "what is the temperature in the {area}",
-    "how warm is it in the {area}",
-    "check the temperature in the {area}",
-]
-
-MEDIA_PLAY = [
-    "play music in the {area}",
-    "put some music on in the {area}",
-    "it's too quiet in the {area}",
-    # s10: words the 7B panel set used that the s8 corpus lacked
-    "switch on the tv in the {area}",
-    "put the tv on in the {area}",
-]
-MEDIA_STOP = [
-    "stop the music in the {area}",
-    "turn the music off in the {area}",
-    "turn that off in the {area}",
-    # s10: words the 7B panel set used that the s8 corpus lacked
-    "switch off the tv in the {area}",
-]
-
-HEATING_SET = ["set the heating in the {area} to {temp} degrees"]
-HEATING_BOOST = [
-    "boost the heating in the {area}",
-    "it's a bit cold in the {area}",
-    "it's getting cold in the {area}",
-    # s10: words the 7B panel set used that the s8 corpus lacked
-    "warm up the {area}",
-    "i'm freezing in the {area}",
-]
-HEATING_OFF = [
-    "turn off the heating in the {area}",
-    "it's too warm in the {area}",
-    "it's getting hot in the {area}",
-]
-
-SHUTTERS_UP = [
-    "open the rollershutters in the {area}",
-    "raise the blinds in the {area}",
-    "let some light into the {area}",
-    # s10: words the 7B panel set used that the s8 corpus lacked
-    "open the shutters in the {area}",
-    "raise the {area} shutters",
-]
-SHUTTERS_DOWN = [
-    "close the rollershutters in the {area}",
-    "lower the blinds in the {area}",
-    "the sun is too strong in the {area}",
-    # s10: words the 7B panel set used that the s8 corpus lacked
-    "close the {area} shutters",
-    "lower the shutters in the {area}",
-]
-SHUTTERS_STOP = ["stop the rollershutters in the {area}"]
-
-WATERING_START = [
-    "start watering the {area}",
-    "water the {area}",
-    "the {area} looks dry",
-    # s10: words the 7B panel set used that the s8 corpus lacked
-    "switch on the sprinkler in the {area}",
-]
-WATERING_STOP = [
-    "stop watering the {area}",
-    "that's enough water for the {area}",
-    # s10: as above
-    "turn off the sprinkler in the {area}",
-    "shut off the water in the {area}",
-]
-
-SWITCHES_ON = [
-    "turn on the plug in the {area}",
-    "switch on the {area} socket",
-    "switch on the appliances in the {area}",
-    "power up the {area} plug",
-]
-SWITCHES_OFF = [
-    "turn off the plug in the {area}",
-    "switch off the {area} socket",
-    "switch off the appliances in the {area}",
-    "cut the power to the {area} plug",
-]
-
-# Places and things no house has, so a command naming one gets no call.
-# "attic" and "garage door" stay out, for the s10 probes.
-UNKNOWN_AREAS = [
-    "hall",
-    "hallway",
-    "basement",
-    "cellar",
-    "loft",
-    "nursery",
-    "dining room",
-    "guest room",
-    "porch",
-    "terrace",
-    "shed",
-    "studio",
-]
-UNKNOWN_DEVICES = [
-    "fridge",
-    "oven",
-    "kettle",
-    "vacuum",
-    "doorbell",
-    "alarm",
-    "printer",
-    "dishwasher",
-    "car",
-    "computer",
-]
-UNKNOWN = [
-    "turn on the {thing} in the {area}",
-    "switch off the {thing} in the {area}",
-    "start the {thing} in the {area}",
-    "turn off the {thing}",
-]
-
-
-def _slug(area: str) -> str:
-    return area.replace(" ", "_")
-
 
 DATA = pathlib.Path("data")
 _HF = "https://huggingface.co/datasets"
@@ -339,355 +190,6 @@ def home_assistant() -> tuple[list[Sample], list[Sample]]:
     return load(train), load(test)
 
 
-# ------------------------------------------- generated state-conditioned homes
-
-# (kind, action) -> the phrasings a command may use and the tool it means.
-_ACTIONS = {
-    ("light", "on"): (LIGHTS_ON, "lights.on"),
-    ("light", "off"): (LIGHTS_OFF, "lights.off"),
-    ("media", "play"): (MEDIA_PLAY, "media.play"),
-    ("media", "stop"): (MEDIA_STOP, "media.stop"),
-    ("heat", "boost"): (HEATING_BOOST, "heating.boost"),
-    ("heat", "off"): (HEATING_OFF, "heating.off"),
-    ("shutter", "up"): (SHUTTERS_UP, "shutters.up"),
-    ("shutter", "down"): (SHUTTERS_DOWN, "shutters.down"),
-    ("shutter", "stop"): (SHUTTERS_STOP, "shutters.stop"),
-    ("water", "start"): (WATERING_START, "watering.start"),
-    ("water", "stop"): (WATERING_STOP, "watering.stop"),
-    ("switch", "on"): (SWITCHES_ON, "switches.on"),
-    ("switch", "off"): (SWITCHES_OFF, "switches.off"),
-}
-
-# Area-less commands resolve through the `user <area>` state line, and to the
-# living room when the user is away (fluksio without presence: always).
-AREALESS_ON = ["turn on the light", "it's too dark in here", "lights on please"]
-AREALESS_OFF = ["turn off the light", "it's too bright in here", "lights off please"]
-AREALESS = {
-    ("light", "on"): AREALESS_ON,
-    ("light", "off"): AREALESS_OFF,
-    ("heat", "boost"): ["it's a bit cold in here", "i'm cold", "warm it up a bit"],
-    ("heat", "off"): ["turn off the heating", "it's too warm in here"],
-    ("media", "play"): ["play some music", "put some music on"],
-    ("media", "stop"): ["stop the music", "turn the music off"],
-    ("shutter", "up"): ["open the blinds", "raise the shutters"],
-    ("shutter", "down"): ["close the blinds", "lower the shutters"],
-    ("switch", "on"): ["switch on the appliances", "turn on the plug"],
-    ("switch", "off"): ["switch off the appliances", "turn off the plug"],
-}
-AREALESS_SET = ["set the heating to {temp} degrees"]
-COMING_HOME = ["coming home in {m}m", "I'll be home in {m}m", "on my way, home in {m}m"]
-DINNER = [
-    "set up a scene for dinner",
-    "dinner scene please",
-    "prepare the living room for dinner",
-]
-
-_STATES = {
-    "light": ["on", "off"],
-    "media": ["on", "off"],
-    "shutter": ["up", "down"],
-    "water": ["on", "off"],
-    "switch": ["on", "off"],
-}
-_DELAYS = [5, 10, 15, 20, 30, 45, 60, 90]
-
-
-def _house(rng: random.Random, avoid: set[str]) -> dict:
-    """Generate a home with unique device IDs excluding `avoid`.
-
-    The living room always has light, media, and heating devices. Other rooms
-    have a light and optional devices; outdoor areas have light and water. Any
-    area may have a switch (a plug for an appliance).
-    """
-    used = set(avoid)
-
-    def dev(kind: str) -> tuple[str, str]:
-        while (i := PREFIX[kind] + "".join(rng.choices(ID_CHARS, k=4))) in used:
-            pass
-        used.add(i)
-        state = (
-            f"{rng.randint(17, 23)}C" if kind == "heat" else rng.choice(_STATES[kind])
-        )
-        return i, state
-
-    def switch() -> list[str]:
-        return ["switch"] if rng.random() < 0.25 else []
-
-    areas = {"living room": {k: dev(k) for k in ["light", "media", "heat", *switch()]}}
-    for room in rng.sample([r for r in ROOMS if r != "living room"], rng.randint(1, 3)):
-        kinds = ["light"] + [
-            k for k in ("media", "heat", "shutter") if rng.random() < 0.4
-        ]
-        areas[room] = {k: dev(k) for k in kinds + switch()}
-    for spot in rng.sample(OUTSIDE, rng.randint(0, 2)):
-        areas[spot] = {k: dev(k) for k in ["light", "water", *switch()]}
-    hour = rng.randrange(24)
-    return {
-        "areas": areas,
-        "time": f"{hour:02d}:{rng.randrange(60):02d}",
-        "out": rng.randint(-5, 30),
-        "dark": hour < 7 or hour >= 18,
-        "user": rng.choice([*areas, "away"]),
-        "ids": used - avoid,
-    }
-
-
-def _render_state(house: dict, keep: list[str]) -> str:
-    """Render the areas in `keep` using the library's state format."""
-    areas = {
-        area: [Device(kind, i, s) for kind, (i, s) in devs.items()]
-        for area, devs in house["areas"].items()
-    }
-    user = None if house["user"] == "away" else house["user"]
-    return render_state(
-        House(house["time"], house["out"], house["dark"], user, areas), keep
-    )
-
-
-def _keep(house: dict, rng: random.Random, *needed: str) -> list[str]:
-    """Return needed areas and one or two distractors in house order."""
-    others = [a for a in house["areas"] if a not in needed]
-    extra = set(rng.sample(others, min(len(others), rng.randint(1, 2))))
-    return [a for a in house["areas"] if a in {*needed} | extra]
-
-
-def _command(house: dict, rng: random.Random) -> Sample:
-    """Generate a device command, optionally delayed or without an area name."""
-    if rng.random() < 0.2:  # area-less: the user's area, else the living room
-        # Away half the time: an engine without presence never knows the room.
-        house["user"] = (
-            "away" if rng.random() < 0.5 else rng.choice(list(house["areas"]))
-        )
-        area = "living room" if house["user"] == "away" else house["user"]
-        devs = house["areas"][area]
-        if "heat" in devs and rng.random() < 0.15:
-            temp = rng.randint(18, 24)
-            prompt = rng.choice(AREALESS_SET).format(temp=temp)
-            calls = [("heating.set", {"id": devs["heat"][0], "temp": temp})]
-        else:
-            kind, action = rng.choice(list(AREALESS))
-            prompt = rng.choice(AREALESS[(kind, action)])
-            # A device the area lacks gets no call, as `_missing` teaches.
-            tool = _ACTIONS[(kind, action)][1]
-            calls = [(tool, {"id": devs[kind][0]})] if kind in devs else []
-    else:
-        area = rng.choice(list(house["areas"]))
-        kind = rng.choice(list(house["areas"][area]))
-        dev_id = house["areas"][area][kind][0]
-        if kind == "heat" and rng.random() < 0.33:
-            temp = rng.randint(18, 24)
-            prompt = rng.choice(HEATING_SET).format(area=area, temp=temp)
-            calls = [("heating.set", {"id": dev_id, "temp": temp})]
-        else:
-            action = rng.choice([a for k, a in _ACTIONS if k == kind])
-            phrasings, tool = _ACTIONS[(kind, action)]
-            prompt = rng.choice(phrasings).format(area=area)
-            calls = [(tool, {"id": dev_id})]
-    if rng.random() < 0.2:  # delayed execution
-        m = rng.choice(_DELAYS)
-        prompt += f" in {m}m"
-        calls = [(n, a | {"delay": f"{m}m"}) for n, a in calls]
-    return _render_state(house, _keep(house, rng, area)) + prompt + "\n", calls
-
-
-def _reading(house: dict, rng: random.Random) -> Sample:
-    area = rng.choice(list(house["areas"]))
-    prompt = rng.choice(TEMPERATURE).format(area=area)
-    return _render_state(house, _keep(house, rng, area)) + prompt + "\n", [
-        ("sensors.temperature", {"area": _slug(area)})
-    ]
-
-
-def _coming_home(house: dict, rng: random.Random) -> Sample:
-    """Heat the living room if cold; turn on its light at arrival if dark and off."""
-    house["user"] = "away"
-    m = rng.choice(_DELAYS)
-    prompt = rng.choice(COMING_HOME).format(m=m)
-    living = house["areas"]["living room"]
-    calls: list[tuple[str, dict]] = []
-    if house["out"] < 15:
-        calls.append(("heating.boost", {"id": living["heat"][0]}))
-    if house["dark"] and living["light"][1] == "off":
-        calls.append(("lights.on", {"delay": f"{m}m", "id": living["light"][0]}))
-    return _render_state(house, _keep(house, rng, "living room")) + prompt + "\n", calls
-
-
-def _scene(house: dict, rng: random.Random) -> Sample:
-    living = house["areas"]["living room"]
-    return _render_state(house, _keep(house, rng, "living room")) + rng.choice(
-        DINNER
-    ) + "\n", [
-        ("lights.on", {"id": living["light"][0]}),
-        ("media.play", {"id": living["media"][0]}),
-    ]
-
-
-def _chatter(house: dict, rng: random.Random) -> Sample:
-    """Generate unrelated chatter with a state block and no target calls."""
-    template, slots = rng.choice(list(_IRRELEVANT.items()))
-    prompt = template.format(rng.choice(slots))
-    return _render_state(house, _keep(house, rng)) + prompt + "\n", []
-
-
-def _missing(house: dict, rng: random.Random) -> Sample:
-    """Request a device kind absent from the area, with no target calls."""
-    area, kind = rng.choice(
-        [
-            (area, kind)
-            for area, devs in house["areas"].items()
-            for kind in ("media", "heat", "shutter", "switch")
-            if kind not in devs
-        ]
-    )
-    action = rng.choice([a for k, a in _ACTIONS if k == kind])
-    phrasings, _ = _ACTIONS[(kind, action)]
-    prompt = rng.choice(phrasings).format(area=area)
-    return _render_state(house, _keep(house, rng, area)) + prompt + "\n", []
-
-
-def _stateless(house: dict, rng: random.Random) -> Sample:
-    """Generate a command without state, using the area slug as the device ID."""
-    kind, action = rng.choice(list(_ACTIONS))
-    pool = AREAS if kind == "light" else OUTSIDE if kind == "water" else ROOMS
-    area = rng.choice(pool)
-    phrasings, tool = _ACTIONS[(kind, action)]
-    return rng.choice(phrasings).format(area=area) + "\n", [(tool, {"id": _slug(area)})]
-
-
-def _pair(house: dict, rng: random.Random) -> Sample:
-    """Name two areas with the same kind of device: a call each, in the order said."""
-    where: dict[str, list[str]] = {}
-    for area, devs in house["areas"].items():
-        for kind in devs:
-            where.setdefault(kind, []).append(area)
-    kind = rng.choice([k for k, areas in where.items() if len(areas) > 1])
-    a, b = rng.sample(where[kind], 2)
-    phrasings, tool = _ACTIONS[rng.choice([k for k in _ACTIONS if k[0] == kind])]
-    prompt = rng.choice(phrasings).format(area=f"{a} and the {b}") + "\n"
-    calls = [(tool, {"id": house["areas"][area][kind][0]}) for area in (a, b)]
-    state = _render_state(house, _keep(house, rng, a, b))
-    if len((state + prompt).encode()) > BUDGET:  # no room for distractors
-        state = _render_state(house, [a, b])
-    return state + prompt, calls
-
-
-def _unknown(house: dict, rng: random.Random) -> Sample:
-    """Name a place or a thing no house has, with no target calls."""
-    if rng.random() < 0.5:
-        phrasings, _ = _ACTIONS[rng.choice(list(_ACTIONS))]
-        prompt = rng.choice(phrasings).format(area=rng.choice(UNKNOWN_AREAS))
-        keep = _keep(house, rng)
-    else:
-        area = rng.choice(list(house["areas"]))
-        thing = rng.choice(UNKNOWN_DEVICES)
-        prompt = rng.choice(UNKNOWN).format(thing=thing, area=area)
-        keep = _keep(house, rng, area)
-    return _render_state(house, keep) + prompt + "\n", []
-
-
-_BUILDERS = [
-    (_command, 50),
-    (_reading, 10),
-    (_coming_home, 10),
-    (_scene, 5),
-    (_chatter, 10),
-    (_missing, 5),
-    (_stateless, 10),
-    (_pair, 8),
-    (_unknown, 6),
-]
-
-
-# A command's delay suffix.
-_DELAY = re.compile(r" in \d+m$")
-
-
-def spoken(command: str) -> str:
-    """The corpus's delay shorthand as someone says it: "in 5m" -> "in 5 minutes"."""
-    return re.sub(r"\bin (\d+)m\b", r"in \1 minutes", command)
-
-
-def load_noisy(
-    path: str | pathlib.Path, min_ratio: float = 0.6
-) -> dict[str, list[str]]:
-    """Read {command: [what a recogniser heard]} from s10's `noisy.jsonl`.
-
-    A transcript sharing too few words with what was said has lost the
-    command's meaning, and is left out rather than taught as it.
-    """
-    table: dict[str, list[str]] = {}
-    for line in pathlib.Path(path).read_text().splitlines():
-        row = json.loads(line)
-        said, heard = spoken(row["command"]).split(), row["text"].split()
-        if difflib.SequenceMatcher(None, said, heard).ratio() >= min_ratio:
-            table.setdefault(row["command"], []).append(row["text"])
-    return table
-
-
-def _misheard(
-    samples: list[Sample], noisy: dict[str, list[str]], share: float, seed: int
-) -> list[Sample]:
-    """Swap `share` of the commands that come with a state for a transcript of them.
-
-    The table holds commands without their delay, which is said after the
-    transcript as a person says it.
-    """
-    rng = random.Random(seed)
-    out = []
-    for prompt, calls in samples:
-        state, _, command = prompt[:-1].rpartition("\n")
-        base = _DELAY.sub("", command)
-        if state and base in noisy and rng.random() < share:
-            prompt = (
-                f"{state}\n{rng.choice(noisy[base])}{spoken(command[len(base) :])}\n"
-            )
-        out.append((prompt, calls))
-    return out
-
-
-def home(
-    n_train: int = 8000,
-    n_eval: int = 400,
-    seed: int = 0,
-    noisy: dict[str, list[str]] | None = None,
-    share: float = 0.3,
-) -> tuple[list[Sample], list[Sample]]:
-    """Return (train, eval) samples, each with a generated house.
-
-    Evaluation device IDs never appear in training, so exact match tests copying
-    from the state block. With `noisy` (`load_noisy`), `share` of the training
-    commands are replaced by what a recogniser heard; evaluation stays clean.
-    """
-    rng = random.Random(seed)
-    builders, weights = zip(*_BUILDERS)
-
-    def build(n: int, avoid: set[str], seen: set[str] | None) -> list[Sample]:
-        samples: list[Sample] = []
-        while len(samples) < n:
-            house = _house(rng, avoid)
-            if seen is not None:
-                seen |= house["ids"]
-            sample = rng.choices(builders, weights)[0](house, rng)
-            # A house too large for the context is drawn again (s10's switches).
-            if len(sample[0].encode()) <= BUDGET:
-                samples.append(sample)
-        return samples
-
-    train_ids: set[str] = set()
-    train = build(n_train, set(), train_ids)
-    evals = build(n_eval, train_ids, None)
-    # Its own seed, so the clean samples are the same with or without noise.
-    return (_misheard(train, noisy, share, seed + 1) if noisy else train), evals
-
-
-def commands(n_train: int = 256000) -> list[str]:
-    """Every command of the training split that comes with a state, once and
-    without its delay (`_misheard` says that after the transcript)."""
-    train, _ = home(n_train, 0)
-    lines = {p[:-1].rpartition("\n")[2] for p, _ in train if p.count("\n") > 1}
-    return sorted({_DELAY.sub("", line) for line in lines})
-
-
 # ------------------------------------------------- corpus from a target list
 
 # A training sample: the command, every listed target with this sample's
@@ -695,8 +197,8 @@ def commands(n_train: int = 256000) -> list[str]:
 Case = tuple[str, list[Target], list[Call]]
 
 # Generic phrasings: `{w}` is a target's words, `{v}` a value as said.
-_ON = ["turn on {w}", "switch on {w}", "turn {w} on", "{w} on"]
-_OFF = ["turn off {w}", "switch off {w}", "turn {w} off", "{w} off"]
+_ON = ["turn on {w}", "switch on {w}", "turn {w} on", "{w} on", "start {w}"]
+_OFF = ["turn off {w}", "switch off {w}", "turn {w} off", "{w} off", "stop {w}"]
 _SET = ["set {w} to {v}", "change {w} to {v}", "{w} to {v}"]
 # A string value may be a verb ("drain the pump") or not ("shutter down").
 _PICK = [*_SET, "switch {w} to {v}", "{w} {v}", "{v} {w}"]
@@ -818,6 +320,32 @@ def text(cases: list[Case]) -> str:
         render_prompt(select(targets, command), command) + answer(calls)
         for command, targets, calls in cases
     )
+
+
+def as_case(targets: list[Target], record: dict) -> Case:
+    """Read an example-shaped record (`corpus`'s `examples`) as a sample:
+    its command, every target with the record's state or its listed value,
+    and its calls. Raise ValueError if the model could not answer it."""
+    command, fixed, calls = _example(targets, record)
+    return command, [fixed.get(t.name, t) for t in targets], calls
+
+
+def from_log(records: Sequence[dict]) -> list[dict]:
+    """Turn a host's log into `examples` for `corpus` and `fit`.
+
+    A record is an example (`state`, `command`, `calls`) of calls a larger
+    model made, plus `kept`: whether the person kept them, not undoing them
+    within a few minutes. A kept record becomes an example with its calls, an
+    undone one an example with none, so the model passes the command on.
+    """
+    return [
+        {
+            "state": r.get("state", {}),
+            "command": r["command"],
+            "calls": r["calls"] if r["kept"] else [],
+        }
+        for r in records
+    ]
 
 
 def _example(

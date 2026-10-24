@@ -18,9 +18,9 @@ from wren.tokenizer import VOCAB_SIZE
 class Config:
     vocab_size: int = VOCAB_SIZE
     dim: int = 256  # width of the residual stream
-    n_layers: int = 8  # depth: the CPU latency axis -- keep shallow (README)
+    n_layers: int = 8  # depth: the CPU latency axis -- keep shallow (s12)
     n_heads: int = 4
-    context: int = 384  # maximum sequence length; holds a pruned state block + calls
+    context: int = 384  # maximum sequence length; holds target lines, command, answer
     ternary: bool = False  # train attention kernels for the ternary pack (s8)
 
 
@@ -337,10 +337,7 @@ def generate_batch(
     return outs, [float(c) for c in conf]
 
 
-WEIGHTS = pathlib.Path(__file__).parent / "weights.npz"
-
-
-def save(model: Wren, path: pathlib.Path = WEIGHTS) -> None:
+def save(model: Wren, path: pathlib.Path) -> None:
     """Save parameters and the configuration needed to rebuild the model."""
     leaves, _ = jax.tree_util.tree_flatten_with_path(nnx.state(model, nnx.Param))
     arrays = {jax.tree_util.keystr(k): np.asarray(v) for k, v in leaves}
@@ -348,7 +345,7 @@ def save(model: Wren, path: pathlib.Path = WEIGHTS) -> None:
     np.savez(path, **arrays)
 
 
-def load(path: pathlib.Path = WEIGHTS) -> Wren:
+def load(path: pathlib.Path) -> Wren:
     """Load the model and configuration saved at `path`."""
     npz = np.load(path)
     cfg = Config(**{k.removeprefix("cfg:"): npz[k].item() for k in npz if "cfg:" in k})

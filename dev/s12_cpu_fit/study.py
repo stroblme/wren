@@ -26,7 +26,7 @@ from wren.export import export
 from wren.model import Config, Wren, save
 from wren.train import muon, sample_batch, train_step
 
-HOME = pathlib.Path(__file__).parents[2] / "examples" / "home.json"
+HOME = runtime.DEMO
 SELECT = targets.select
 
 

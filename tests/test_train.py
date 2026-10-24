@@ -40,14 +40,30 @@ def test_ternary_kernels_survive_export(tmp_path):
 
 def test_fit_writes_a_pack_that_act_runs(tmp_path):
     out = tmp_path / "lab.bin"
-    result = tiny_fit(LAB, out=out, steps=200, n_train=3000, n_eval=60)
+    tests = [
+        {"command": "turn on the pump", "calls": [["pump", True]]},
+        {"command": "hello there", "calls": []},
+    ]
+    asked = []
+    result = tiny_fit(
+        LAB,
+        out=out,
+        tests=tests,
+        paraphrase=lambda c: asked.append(c) or [],
+        steps=400,
+        n_train=3000,
+        n_eval=60,
+    )
 
+    assert asked  # the hook reaches the training corpus
     pack = runtime.load_pack(out)
     assert [t["name"] for t in pack["meta"]["targets"]] == ["pump", "ph"]
     assert all("value" not in t for t in pack["meta"]["targets"])
     assert pack["meta"]["threshold"] == result["threshold"]
+    assert pack["meta"]["test_exact_match"] == result["test_exact_match"]
     assert math.isfinite(result["threshold"])
     assert 0 < result["coverage"] <= result["exact_match"] <= 1
+    assert 0 <= result["test_coverage"] <= result["test_exact_match"] <= 1
     calls = act("turn on the pump", LAB, model=pack)
     assert all(c.target in ("pump", "ph") for c in calls)
 

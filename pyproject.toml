@@ -1,14 +1,14 @@
 [project]
 name = "wren"
-version = "1.1.0"
+version = "2.0.0"
 description = "A tiny attention-only byte-level model for grounded tool calls"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Melvin Strobl", email = "stroblme@posteo.de" }]
-# Inference (`from wren import act`) runs on the packed model in numpy;
-# JAX is for training and the fp32 CLI only.
+# Inference (`from wren import act`, the `wren` command) runs on the packed
+# model in numpy; JAX is for training only.
 dependencies = ["numpy>=2"]
 
 [project.optional-dependencies]
@@ -43,9 +43,19 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["wren"]
-# Trained weights live inside the package so the wheel ships a usable model:
-# the fp32 JAX weights and the packed ternary model the library runs.
-artifacts = ["wren/weights.npz", "wren/wren.bin"]
+# The wheel ships a usable model: the packed demo model the library runs
+# (and, as package data, the demo installation it learnt, `wren/home.json`).
+artifacts = ["wren/wren.bin"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ty.src]
+# Studies that use the home API removed in 2.0.0. Their code runs at tag
+# v1.1.0, as each README's Reproduce section says, and is not checked here.
+exclude = [
+    "dev/s1_baseline",
+    "dev/s8_state_quant",
+    "dev/s8b_copy_spectrum",
+    "dev/s10_fluksio_tail",
+]

@@ -1,17 +1,15 @@
 """Check the corpus generated from a target list."""
 
 import json
-import pathlib
 import re
 
 import pytest
 
-from wren.dataset import corpus, text
+from wren import runtime
+from wren.dataset import as_case, corpus, from_log, text
 from wren.targets import BUDGET, N_NEW, Call, Target, answer, parse, prompt, select
 
-HOME_JSON = json.loads(
-    (pathlib.Path(__file__).parents[1] / "examples/home.json").read_text()
-)
+HOME_JSON = json.loads(runtime.DEMO.read_text())
 HOME = [Target(**d) for d in HOME_JSON["targets"]]
 EXAMPLES = HOME_JSON["examples"]
 LAB = [
@@ -115,6 +113,17 @@ def test_multi_target_and_delays(home):
         assert answer(calls).endswith(f" in {n}{unit[0]}\n\n")
 
 
+def test_start_and_stop_say_on_and_off(home):
+    said = {
+        (c.split()[0], calls[0].value)
+        for c, _, calls in home
+        if calls
+        and isinstance(calls[0].value, bool)
+        and c.split()[0] in ("start", "stop")
+    }
+    assert said == {("start", True), ("stop", False)}
+
+
 def test_durations(home):
     # "for N minutes" on a bool: the value now, the opposite after N.
     lasting = [
@@ -172,6 +181,56 @@ def test_an_example_that_cannot_be_learnt_raises():
             seed=0,
             examples=[{"command": "open the awning", "calls": [["canopy", "OPEN"]]}],
         )
+
+
+def test_as_case_reads_a_record_on_the_listed_targets():
+    record = {
+        "state": {"user_location": "office"},
+        "command": "switch on the light",
+        "calls": [["office_light", True]],
+    }
+    command, state, calls = as_case(HOME, record)
+    assert command == "switch on the light"
+    assert calls == [Call("office_light", True)]
+    assert [t.name for t in state] == [t.name for t in HOME]
+    by_name = {t.name: t.value for t in state}
+    assert by_name["user_location"] == "office"
+    assert by_name["bedroom_light"] is True  # listed value kept
+    with pytest.raises(ValueError, match="too dark in here"):
+        as_case(
+            HOME,
+            {"command": "it's too dark in here", "calls": [["kitchen_light", True]]},
+        )
+
+
+def test_from_log_keeps_kept_calls_and_turns_undone_ones_into_negatives():
+    log = [
+        {
+            "state": {"user_location": "office"},
+            "command": "more light please",
+            "calls": [["office_light", True]],
+            "kept": True,
+        },
+        {
+            "command": "make the garden cosy",
+            "calls": [["garden_light", True]],
+            "kept": False,
+        },
+    ]
+    examples = from_log(log)
+    assert examples == [
+        {
+            "state": {"user_location": "office"},
+            "command": "more light please",
+            "calls": [["office_light", True]],
+        },
+        {"state": {}, "command": "make the garden cosy", "calls": []},
+    ]
+    samples = [
+        (c, calls) for c, _, calls in corpus(HOME, n=200, seed=0, examples=examples)
+    ]
+    assert ("more light please", [Call("office_light", True)]) in samples
+    assert ("make the garden cosy", []) in samples
 
 
 def test_paraphrase_widens_commands_once_per_text():

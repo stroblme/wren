@@ -52,7 +52,8 @@ def fit(
     precision: float,
     seed: int,
 ) -> dict:
-    """Train on an installation's JSON file (`targets`, `examples`) with `wren.train.fit`."""
+    """Train on an installation's JSON file (`targets`, `examples`, `tests`) with
+    `wren.train.fit`."""
     import json
 
     from wren import train
@@ -64,6 +65,7 @@ def fit(
         [Target(**t) for t in data["targets"]],
         out=path,
         examples=data.get("examples", ()),
+        tests=data.get("tests", ()),
         dim=dim,
         n_layers=n_layers,
         n_heads=n_heads,

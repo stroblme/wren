@@ -1,18 +1,15 @@
 """Check the generic target format: prompt, selection, answer parsing and `act`."""
 
 import json
-import pathlib
+import subprocess
+import sys
 
 import pytest
 
+from wren import runtime
 from wren.targets import N_NEW, Call, Target, act, answer, parse, prompt, select
 
-HOME = [
-    Target(**d)
-    for d in json.loads(
-        (pathlib.Path(__file__).parents[1] / "examples/home.json").read_text()
-    )["targets"]
-]
+HOME = [Target(**d) for d in json.loads(runtime.DEMO.read_text())["targets"]]
 LAB = [
     Target("centrifuge_run", "bool", False),
     Target("centrifuge_rpm", "int", 3000, range=[500, 15000]),
@@ -24,6 +21,11 @@ LAB = [
 
 def names(targets: list[Target]) -> list[str]:
     return [t.name for t in targets]
+
+
+def test_import_does_not_load_jax():
+    code = "import sys, wren; from wren import act; assert 'jax' not in sys.modules"
+    subprocess.run([sys.executable, "-c", code], check=True)
 
 
 def test_example_home_loads():
