@@ -21,6 +21,7 @@ class Config:
     n_layers: int = 8  # depth: the CPU latency axis -- keep shallow (README)
     n_heads: int = 4
     context: int = 384  # maximum sequence length; holds a pruned state block + calls
+    ternary: bool = False  # train attention kernels for the ternary pack (s8)
 
 
 def rope(x: jax.Array, offset: jax.Array | int = 0) -> jax.Array:
@@ -38,6 +39,20 @@ def rope(x: jax.Array, offset: jax.Array | int = 0) -> jax.Array:
     return jnp.concatenate([x1 * cos - x2 * sin, x1 * sin + x2 * cos], axis=-1)
 
 
+class TernaryLinear(nnx.Linear):
+    """A linear layer that computes with its kernel as `wren.export` packs it.
+
+    The forward pass uses {-1, 0, +1} times the kernel's mean absolute value;
+    gradients pass straight through to the fp32 kernel, which keeps training.
+    """
+
+    def __call__(self, inputs: jax.Array, out_sharding=None) -> jax.Array:
+        w = self.kernel[...]
+        scale = jnp.mean(jnp.abs(w)) + 1e-12
+        q = jnp.clip(jnp.round(w / scale), -1, 1) * scale
+        return inputs @ (w + jax.lax.stop_gradient(q - w))
+
+
 class AttentionBlock(nnx.Module):
     """Pre-norm causal self-attention with QK normalization and no feed-forward layer."""
 
@@ -45,8 +60,9 @@ class AttentionBlock(nnx.Module):
         self.n_heads = cfg.n_heads
         self.head_dim = cfg.dim // cfg.n_heads
         self.norm = nnx.RMSNorm(cfg.dim, rngs=rngs)
-        self.wqkv = nnx.Linear(cfg.dim, 3 * cfg.dim, use_bias=False, rngs=rngs)
-        self.wo = nnx.Linear(cfg.dim, cfg.dim, use_bias=False, rngs=rngs)
+        linear = TernaryLinear if cfg.ternary else nnx.Linear
+        self.wqkv = linear(cfg.dim, 3 * cfg.dim, use_bias=False, rngs=rngs)
+        self.wo = linear(cfg.dim, cfg.dim, use_bias=False, rngs=rngs)
         # QK-norm: RMS-normalize queries and keys per head before their dot
         # product, bounding attention logits. Per the paper, this is the one
         # ingredient that keeps deep attention-only stacks trainable.
@@ -335,7 +351,7 @@ def save(model: Wren, path: pathlib.Path = WEIGHTS) -> None:
 def load(path: pathlib.Path = WEIGHTS) -> Wren:
     """Load the model and configuration saved at `path`."""
     npz = np.load(path)
-    cfg = Config(**{k.removeprefix("cfg:"): int(npz[k]) for k in npz if "cfg:" in k})
+    cfg = Config(**{k.removeprefix("cfg:"): npz[k].item() for k in npz if "cfg:" in k})
     model = Wren(cfg, rngs=nnx.Rngs(0))
     leaves, treedef = jax.tree_util.tree_flatten_with_path(nnx.state(model, nnx.Param))
     restored = [jnp.asarray(npz[jax.tree_util.keystr(k)]) for k, _ in leaves]

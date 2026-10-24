@@ -145,5 +145,5 @@ def test_flow_takes_every_knob():
     from wren import flow
     from wren.train import DEFAULTS
 
-    assert set(inspect.signature(flow.fit).parameters) == {"corpus", *DEFAULTS}
+    assert set(inspect.signature(flow.fit).parameters) == {"installation", *DEFAULTS}
     assert {port.name: port.initial for port in flow.PORTS} == DEFAULTS

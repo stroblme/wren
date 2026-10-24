@@ -1,7 +1,8 @@
 """Command line interface for inference and training.
 
-`wren <prompt>` or piped input runs the shipped weights. `wren --train`
-runs the Fluksio training flow and overwrites the package's weights file.
+`wren <prompt>` or piped input runs the shipped weights. `wren --train
+home.json` runs the Fluksio training flow on an installation's targets and
+examples and writes the model's pack beside it, as `home.bin`.
 """
 
 import argparse
@@ -24,10 +25,8 @@ def main() -> None:
     parser.add_argument("prompt", nargs="*", help="prompt; read from stdin if omitted")
     parser.add_argument(
         "--train",
-        nargs="?",
-        const="",
-        metavar="CORPUS",
-        help="train on CORPUS (default: built-in demo corpus) and save the weights",
+        metavar="JSON",
+        help="train on an installation's targets and examples; write the pack as .bin",
     )
     parser.add_argument(
         "-n", "--tokens", type=int, default=64, help="bytes to generate"
@@ -78,22 +77,20 @@ def main() -> None:
 
 
 def train_run(args: argparse.Namespace) -> None:
-    """Run the training flow and save its weights in the package."""
+    """Run the training flow and write its pack beside the installation's JSON."""
     try:
         from fluksio.sdk import SyncError
         from fluksio.sdk.cli import discover
         from fluksio.sdk.client import ApiError, Client, repo_root, sync
 
         from wren import flow
-        from wren.model import WEIGHTS
         from wren.train import DEFAULTS
     except ImportError:  # fluksio is a dev-group dependency; so is training.
         sys.exit("wren --train needs fluksio: `uv sync --group dev`")
 
-    # Absolute: the worker reads the corpus from its own working directory.
-    params: dict[str, Any] = {
-        "corpus": str(pathlib.Path(args.train).resolve()) if args.train else ""
-    }
+    # Absolute: the worker reads the file from its own working directory.
+    installation = pathlib.Path(args.train).resolve()
+    params: dict[str, Any] = {"installation": str(installation)}
     params |= {name: getattr(args, name) for name in DEFAULTS}
 
     try:
@@ -112,15 +109,17 @@ def train_run(args: argparse.Namespace) -> None:
                 log(str(failed.get("logs") or ""))
             sys.exit(f"run {handle.id} {handle.status}")
         # Artifacts and metrics are named for the flow that reported them.
-        weights = handle.download(f"{flow.NAME}.weights")
+        pack = handle.download(f"{flow.NAME}.pack")
     except (SyncError, ApiError) as exc:
         sys.exit(f"fluksio: {exc} (is `uv run fluksio serve` running?)")
 
-    WEIGHTS.write_bytes(weights)
+    out = installation.with_suffix(".bin")
+    out.write_bytes(pack)
     result = handle.result
     log(
-        f"{result['n_params']:,.0f} params, final loss "
-        f"{result['final_loss']:.3f}; saved {WEIGHTS}"
+        f"{result['n_params']:,.0f} params, final loss {result['final_loss']:.3f}, "
+        f"held-out exact match {result['exact_match']:.1%}, coverage "
+        f"{result['coverage']:.1%} at threshold {result['threshold']:.2f}; saved {out}"
     )
 
 

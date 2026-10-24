@@ -89,7 +89,7 @@ def main() -> None:
         """Load SpectralWren weights, including the extra `log_freqs` parameter."""
         npz = np.load(path)
         cfg = Config(
-            **{k.removeprefix("cfg:"): int(npz[k]) for k in npz if "cfg:" in k}
+            **{k.removeprefix("cfg:"): npz[k].item() for k in npz if "cfg:" in k}
         )
         model = SpectralWren(cfg, nnx.Rngs(0), spectrum(cfg.dim // cfg.n_heads))
         leaves, treedef = jax.tree_util.tree_flatten_with_path(

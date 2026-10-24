@@ -102,8 +102,8 @@ cc -O3 -march=native -o wren-rt runtime/wren.c -lm
 **Training.** Runs are tracked by a local Fluksio engine:
 
 ```sh
-uv run fluksio serve    # in its own terminal
-uv run wren --train     # writes wren/weights.npz
+uv run fluksio serve                     # in its own terminal
+uv run wren --train examples/home.json   # writes examples/home.bin
 ```
 
 The library and C runtime run the packed `wren/wren.bin`, exported from

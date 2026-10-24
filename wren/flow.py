@@ -1,7 +1,8 @@
 """Fluksio training flow used by `wren --train`.
 
 Flow inputs use `wren.train.DEFAULTS` and support parameter sweeps. The
-engine records parameters, loss, and weights; training uses `wren.train`.
+engine records parameters, loss, held-out scores and the pack; training
+uses `wren.train.fit`.
 """
 
 import pathlib
@@ -22,12 +23,15 @@ PORTS = [
 
 
 @node(
-    requires=[Port("corpus", "str"), *(Port(p.name, p.dtype) for p in PORTS)],
+    requires=[Port("installation", "str"), *(Port(p.name, p.dtype) for p in PORTS)],
     provides=[
         Port("loss", "float", stream=True),
         Port("final_loss", "float"),
         Port("n_params", "float"),
-        Port("weights", "artifact"),
+        Port("exact_match", "float"),
+        Port("threshold", "float"),
+        Port("coverage", "float"),
+        Port("pack", "artifact"),
     ],
     # No `gpus` declaration: this is the shipped training command, so a machine
     # without a card should train on the CPU rather than refuse the run.
@@ -36,42 +40,45 @@ PORTS = [
     resources={"env": {"XLA_PYTHON_CLIENT_PREALLOCATE": "false"}},
 )
 def fit(
-    corpus: str,
+    installation: str,
     dim: int,
     n_layers: int,
     n_heads: int,
-    context: int,
     steps: int,
     batch_size: int,
-    seq_len: int,
     lr: float,
+    n_train: int,
+    n_eval: int,
+    precision: float,
+    seed: int,
 ) -> dict:
-    """Train from a corpus path, or the built-in corpus if the path is empty."""
-    from flax import nnx
+    """Train on an installation's JSON file (`targets`, `examples`) with `wren.train.fit`."""
+    import json
 
-    from wren.dataset import home_corpus
-    from wren.model import Config, Wren, save
-    from wren.train import train
+    from wren import train
+    from wren.targets import Target
 
-    text = pathlib.Path(corpus).read_text() if corpus else home_corpus()
-    cfg = Config(dim=dim, n_layers=n_layers, n_heads=n_heads, context=context)
-    model = Wren(cfg, rngs=nnx.Rngs(0))
-    losses = train(
-        model,
-        text,
+    data = json.loads(pathlib.Path(installation).read_text())
+    path = pathlib.Path(tempfile.mkdtemp()) / "wren.bin"
+    result = train.fit(
+        [Target(**t) for t in data["targets"]],
+        out=path,
+        examples=data.get("examples", ()),
+        dim=dim,
+        n_layers=n_layers,
+        n_heads=n_heads,
         steps=steps,
         batch_size=batch_size,
-        seq_len=seq_len,
         lr=lr,
+        n_train=n_train,
+        n_eval=n_eval,
+        precision=precision,
+        seed=seed,
         on_log=lambda step, loss: fluksio.emit(loss=loss),
     )
-
-    path = pathlib.Path(tempfile.mkdtemp()) / "weights.npz"
-    save(model, path)
-    return {
-        "final_loss": losses[-1],
-        "n_params": model.n_params(),
-        "weights": fluksio.save_artifact(path.read_bytes(), name="weights.npz"),
+    keys = ("final_loss", "n_params", "exact_match", "threshold", "coverage")
+    return {k: result[k] for k in keys} | {
+        "pack": fluksio.save_artifact(path.read_bytes(), name="wren.bin"),
     }
 
 
@@ -79,8 +86,7 @@ FLOW = Flow(
     NAME,
     title="wren --train",
     nodes=[fit],
-    # The corpus travels as a path: it is half a megabyte of text, which is a
-    # file for the worker to read, not a parameter to record on every run.
-    inputs=[Port("corpus", "str", initial=""), *PORTS],
-    outputs=["final_loss", "n_params"],
+    # The installation travels as a path, for the worker to read.
+    inputs=[Port("installation", "str"), *PORTS],
+    outputs=["final_loss", "n_params", "exact_match", "threshold", "coverage"],
 )

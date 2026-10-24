@@ -688,11 +688,6 @@ def commands(n_train: int = 256000) -> list[str]:
     return sorted({_DELAY.sub("", line) for line in lines})
 
 
-def home_corpus() -> str:
-    """Return the generated training split as text, the default for `wren --train`."""
-    return to_text(home()[0])
-
-
 # ------------------------------------------------- corpus from a target list
 
 # A training sample: the command, every listed target with this sample's
