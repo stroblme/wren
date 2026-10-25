@@ -32,8 +32,7 @@ To train through Python, install the training extra:
 python -m pip install "wren[train] @ git+https://github.com/stroblme/wren"
 ```
 
-For CLI training and development, install
-[uv](https://docs.astral.sh/uv/getting-started/installation/) and clone the repo:
+For CLI training and development, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and clone the repo:
 
 ```sh
 git clone https://github.com/stroblme/wren.git
