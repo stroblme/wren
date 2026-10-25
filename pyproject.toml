@@ -1,5 +1,5 @@
 [project]
-name = "wren"
+name = "wren-lm"
 version = "2.0.0"
 description = "A tiny attention-only byte-level model for grounded tool calls"
 readme = "README.md"

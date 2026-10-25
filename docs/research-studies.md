@@ -25,7 +25,7 @@ batches of 16.
 | Parameters | 1.12M |
 | Pack size | 535 kB |
 | Median request latency | 52 ms, one BLAS thread on an idle CPU |
-| End-to-end training | 41 minutes on an idle 20-core CPU; 62 minutes shared with other jobs |
+| End-to-end training | 41 minutes on an idle 20-core CPU |
 | Saved confidence threshold | About 0.973 |
 
 | Evaluation set | Exact match | Coverage at saved threshold |
