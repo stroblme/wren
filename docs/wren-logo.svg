@@ -5,7 +5,7 @@
    role="img"
    version="1.1"
    id="svg7"
-   sodipodi:docname="wren_lab_logo_ring_connected.svg"
+   sodipodi:docname="wren-logo.svg"
    height="256"
    inkscape:version="1.4.4 (unknown)"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
@@ -16,7 +16,17 @@
    xmlns:cc="http://creativecommons.org/ns#"
    xmlns:dc="http://purl.org/dc/elements/1.1/">
   <defs
-     id="defs7" />
+     id="defs7">
+    <clipPath
+       id="landscape-clip"
+       clipPathUnits="userSpaceOnUse">
+      <circle
+         cx="128"
+         cy="128"
+         r="125.05337"
+         id="circle1" />
+    </clipPath>
+  </defs>
   <sodipodi:namedview
      id="namedview7"
      pagecolor="#ffffff"
@@ -28,32 +38,40 @@
      inkscape:deskcolor="#d1d1d1"
      showborder="false"
      inkscape:zoom="2.8742138"
-     inkscape:cx="340.093"
-     inkscape:cy="136.0372"
-     inkscape:window-width="3840"
-     inkscape:window-height="1163"
+     inkscape:cx="228.75821"
+     inkscape:cy="108.2035"
+     inkscape:window-width="2560"
+     inkscape:window-height="1403"
      inkscape:window-x="0"
      inkscape:window-y="0"
      inkscape:window-maximized="1"
-     inkscape:current-layer="svg7" />
+     inkscape:current-layer="g7" />
   <title
-     id="title1">Wren logo mark with perch and tail meeting the ring</title>
+     id="title1">Wren logo mark with sun and ground inside a ring</title>
   <desc
-     id="desc1">A rounded wren facing right with a cocked tail whose tip meets the enclosing circle, standing on one leg on a horizontal perch that spans the ring as a chord, drawn in muted taupe tones.</desc>
+     id="desc1">A rounded wren facing right with a cocked tail whose tip meets the enclosing circle, resting on gently curved ground beneath a large half sun clipped by the upper-left edge of the ring, drawn in muted taupe and cream tones.</desc>
   <g
-     transform="matrix(-1.3976565,0,0,1.3976565,588.49093,-88.636758)"
+     id="landscape"
+     clip-path="url(#landscape-clip)">
+    <path
+       id="ground"
+       d="M 0,224 C 88,207 159,209 256,220 V 256 H 0 Z"
+       fill="#EFE6DA" />
+  </g>
+  <g
+     transform="matrix(-1.3976565,0,0,1.521932,588.49093,-115.72881)"
      style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#000000;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
      id="g7">
     <path
-       d="m 266,152 c -7,-26 16,-46 44,-38 26,8 48,32 66,58 L 412.59104,121.87873 418.94721,155 C 400.94721,175 408,174 386,194 c -34,32 -94,32 -118,0 -9,-12 -9,-30 -2,-42 z"
+       d="m 266,152 c -7,-26 16,-46 44,-38 26,8 48,32 66,58 L 408.18871,121.0801 418.94721,155 c -18,20 -9.95148,19.45721 -31.95148,39.45721 -37.23612,26.28488 -84.04816,19.22342 -114.76389,-2.51465 C 259.66426,183.04825 259,164 266,152 Z"
        fill="#A89684"
        style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#a89684;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
        id="path3"
        sodipodi:nodetypes="ccccccsc" />
     <path
-       d="m 312,164 c 28,-9 56,4 66,24 -22,12 -56,8 -68,-8 z"
+       d="m 304.9933,160.71138 c 30.97254,-9.95546 61.94507,4.42464 73.0067,26.5479 -24.33557,13.27394 -61.94508,8.84929 -75.21902,-8.8493 z"
        fill="#8A7867"
-       style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#8a7867;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
+       style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#8a7867;stroke:none;stroke-width:1.10616px;stroke-linecap:butt;stroke-linejoin:miter"
        id="path4" />
     <path
        d="m 267,146 -27,9 27,9 z"
@@ -61,20 +79,21 @@
        style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#6f6255;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
        id="path5" />
     <path
-       d="m 274,130 c 14,-9 32,-9 44,-2"
+       d="m 275.19992,130.05078 c 12.76293,-9.12961 29.1724,-9.12961 40.11205,-2.0288"
        stroke="#EFE6DA"
        stroke-width="4.5"
        stroke-linecap="round"
        fill="none"
-       style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:none;stroke:#efe6da;stroke-width:4.5px;stroke-linecap:round;stroke-linejoin:miter"
+       style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:none;stroke:#efe6da;stroke-width:4.32741px;stroke-linecap:round;stroke-linejoin:miter"
        id="path6" />
-    <circle
-       cx="296"
-       cy="143"
-       r="7.5"
+    <ellipse
+       cx="294.56903"
+       cy="141.68588"
        fill="#3D352E"
        style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:#3d352e;stroke:none;stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter"
-       id="circle6" />
+       id="circle6"
+       rx="9.740387"
+       ry="10.014655" />
     <circle
        cx="293.39999"
        cy="140.39999"
@@ -90,14 +109,14 @@
      fill="none"
      stroke="#B9AE9E"
      stroke-width="1.5"
-     style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:none;stroke:#b9ae9e;stroke-width:5.89328;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none"
-     id="circle1" />
+     style="color:#0b0b0b;font-weight:400;font-size:16px;font-family:anthropic-sans, '-apple-system', BlinkMacSystemFont, 'Segoe UI', sans-serif;dominant-baseline:auto;text-anchor:start;opacity:1;fill:none;stroke:#a89684;stroke-width:5.89328;stroke-linecap:butt;stroke-linejoin:miter;stroke-dasharray:none;stroke-opacity:1"
+     id="circle3" />
   <metadata
      id="metadata7">
     <rdf:RDF>
       <cc:Work
          rdf:about="">
-        <dc:title>Wren logo mark with perch and tail meeting the ring</dc:title>
+        <dc:title>Wren logo mark with sun and ground inside a ring</dc:title>
       </cc:Work>
     </rdf:RDF>
   </metadata>
