@@ -151,10 +151,9 @@ windows** sampled from the joined training text. It uses ternary
 quantization and Muon with a cosine learning-rate decay, and packs the
 model into about 535 kB. The 20-target demo took roughly 40–60 minutes on a
 20-core CPU; time depends on the installation and hardware. The
-[s12 study](https://github.com/stroblme/wren/tree/main/dev/s12_cpu_fit)
-compares other shapes and budgets, and the [Reference](reference.md#fit) lists
-the options and return values. `fit` then runs the model on 1000 generated
-samples drawn with another seed and on your tests.
+[Reference](reference.md#fit) lists the options and return values.
+`fit` then runs the model on 1000 generated samples drawn with another seed
+and on your tests.
 
 See the [result reference](reference.md#results) for exact match, coverage,
 loss and timing. Generated evaluation samples use the same templates and
@@ -216,12 +215,13 @@ executing it. A duration can lose its delayed stop call. Sending the whole
 command to a fallback after applying some calls can duplicate actions.
 Wren leaves that policy to your application.
 
-`fit` finds the lowest confidence meeting `precision` (default 0.99), once
-on generated evaluation calls and once on test calls, then saves the higher
-threshold. Correctness requires the same target, value and delay. Separate
-calibration keeps a small test set from being outweighed by the generated
-samples. If either set has no finite threshold, `fit` raises and writes no
-model.
+`fit` saves the lowest confidence at which the applied calls meet
+`precision` (default 0.99) on the generated evaluation calls and on the test
+calls, each set checked on its own. Correctness requires the same target,
+value and delay. Checking the sets apart keeps a small test set from being
+outweighed by the generated samples. Tests on which the model makes no call
+apply nothing wrong. If no confidence meets `precision` on both, `fit` raises
+and writes no model.
 
 The threshold reflects only the generated phrasings and your tests. A phrasing
 unlike both can still be answered confidently and wrongly. Widen what the
@@ -280,23 +280,13 @@ threshold. It prints `not handled` when there are no calls. Supply both
 `--targets` and `--model` for your installation: each defaults independently
 to the demo. Target values are read from the JSON on each invocation.
 
-The shipped model answers 92.7% of 1000 generated evaluation samples exactly
-right, and 8 of its 18 tests. Its threshold, about 0.973, sits just above its most
-confident wrong answer to a test: "kill all the lights" switches them all
-on, at 0.96. Applying calls from there, it handles 69.8% of the generated
-commands and 5 of the tests, two of them by passing them on. Coverage includes correct
-abstentions; these measurements describe this pack, not expected accuracy
-for a new installation.
-
-It knows only the demo home's 20 targets, by their names and descriptions,
-and English commands in the generator's style. Words the generator does not
-use are where it fails: "kill" is not a word it knows for off, "half an
-hour" is not a delay it knows (it opens the awning now, at 0.68), and "good
-night" switches the bedroom light off (at 0.51). It also miscopies the number
-in about a third of the delays ("in 87 minutes" as 88), always below the
-threshold: at the threshold it handles 2 of the 97 delayed commands. Of a
-duration ("off for 7 minutes") it often applies the call for now but not the
-one that ends it.
+The demo knows only its own targets and English commands in the generator's
+style. Unfamiliar synonyms and time expressions can produce wrong calls;
+confidence filtering can leave a duration without its delayed stop call.
+Train on your installation's targets, examples and tests, and check partial
+answers before executing them. See the
+[demo evaluation](research-studies.md#demo-installation)
+for measurements and observed failures.
 
 ## Troubleshooting
 

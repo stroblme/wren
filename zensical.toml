@@ -23,6 +23,7 @@ nav = [
   { "How-to" = "guide.md" },
   { "Reference" = "reference.md" },
   { "Development" = "development.md" },
+  { "Research and benchmarks" = "research-studies.md" },
 ]
 
 [project.extra]

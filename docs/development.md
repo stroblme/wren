@@ -52,6 +52,20 @@ uv run wren --targets home.json --model home.bin "turn on the kitchen light"
 `home.json` and `home.bin` are your local outputs; keep them out of a source
 change unless you intend to publish a model.
 
+## GPU training
+
+For a compatible NVIDIA GPU and driver, select the `cuda12` or `cuda13`
+dependency group. For example:
+
+```sh
+uv sync --locked --group cuda12
+uv run --group cuda12 fluksio serve --gpus 1
+```
+
+Then run the tracked training command in a second terminal. Include the
+selected group in later `uv sync` commands, which otherwise remove those
+dependencies.
+
 ## Checks and documentation
 
 Run the same checks as CI:
@@ -81,33 +95,6 @@ by `.github/workflows/docs.yml`. Edit the Markdown in `docs/`; edit
 from the site. To update the architecture drawing, edit
 `docs/architecture.d2` and render it with
 `d2 docs/architecture.d2 docs/architecture.svg`.
-
-## Research studies
-
-Each study under
-[`dev/`](https://github.com/stroblme/wren/tree/main/dev) has a README with its
-question, findings and reproduction commands. Study s12 runs with the current
-target API; its published measurements used the older demo data at tag
-`v1.1.0`. Its constant learning rate also differs from `fit`'s current cosine
-decay.
-
-Studies s1–s10 document historical models and data. Their READMEs target
-`v1.1.0`, which retains the home API removed in Wren 2.0. Use a separate
-checkout for those commands:
-
-```sh
-git clone --branch v1.1.0 https://github.com/stroblme/wren.git wren-v1
-cd wren-v1
-uv sync --locked --group cuda12
-uv run --group cuda12 fluksio serve --gpus 1
-```
-
-Training those studies requires a compatible NVIDIA GPU and driver. Current
-HEAD offers `cuda12` and `cuda13` dependency groups. Include the selected
-group in later `uv sync` commands, which otherwise remove those dependencies.
-In a second terminal at the study's checkout, follow its README. Use Fluksio to
-track experiments; data downloads go into ignored `data/`, and plots into
-ignored `dev/*/figures/`.
 
 ## Wren in Fluksio
 

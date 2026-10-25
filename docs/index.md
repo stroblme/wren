@@ -63,19 +63,5 @@ applied = [c for c in calls if c.confidence >= model["meta"]["threshold"]]
 confidence and fallback policy before acting; the [How-to](guide.md) covers
 partial answers and the demo's limits. See the [Reference](reference.md)
 for the API, training defaults and C runtime, or [Development](development.md)
-for checkout setup, tests and research studies.
-
-## How it works
-
-Wren is an attention-only byte-level decoder: transformer blocks without the
-feed-forward layers, with the parameter budget spent on attention instead.
-The prompt supplies target names and current values; the model generates
-`set` and `read` calls. Attention projections use ternary weights, packed
-for storage; embeddings and normalization scales remain float32. NumPy and
-C runtimes load the same pack.
-
-![Wren architecture](architecture.svg)
-
-The studies behind these choices are in the repository's
-[`dev/`](https://github.com/stroblme/wren/tree/main/dev) folder, each with its
-question, findings and how to reproduce it.
+for checkout setup, tests and integration. Model architecture, measurements
+and study reproduction are covered in [Research and benchmarks](research-studies.md).

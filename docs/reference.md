@@ -140,7 +140,7 @@ Two callbacks are available through Python only:
 | Key | Meaning |
 |---|---|
 | `exact_match` | Fraction of generated evaluation samples with exactly the expected calls before confidence filtering. |
-| `threshold` | Higher of the thresholds selected on generated evaluation calls and installation test calls. |
+| `threshold` | Lowest confidence at which applied calls reach the precision on the generated evaluation calls and on the installation test calls, each on its own. |
 | `coverage` | Fraction of generated evaluation samples with exactly the expected calls after filtering. Includes correct abstentions. |
 | `test_exact_match`, `test_coverage` | The same sample metrics on supplied tests; absent when no tests are given. |
 | `final_loss` | Last training step's mean next-byte cross-entropy, in nats. |
@@ -148,8 +148,7 @@ Two callbacks are available through Python only:
 | `seconds` | End-to-end elapsed time, including corpus generation, evaluation and export. |
 
 Installation metrics compare target, value and delay, ignoring call order
-and confidence. This differs from the ordered tool-call metric used by the
-historical mobile-actions studies.
+and confidence.
 
 A nonempty test set containing only abstention cases cannot yield a finite
 threshold at the default precision: calibration needs correctly predicted
