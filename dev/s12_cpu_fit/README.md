@@ -69,19 +69,31 @@ job and ran about 10% slower per step than the others. Latency is the median
 
 ## Reproduce
 
+For the current code, follow the [checkout setup](../../docs/development.md).
+Run the self-checks, then start the CPU engine in its own terminal:
+
 ```sh
 uv run python dev/s12_cpu_fit/study.py   # self-checks
 JAX_PLATFORMS=cpu OPENBLAS_NUM_THREADS=1 uv run fluksio serve --max-runs 1 --gpus 0
+```
+
+In a second terminal in the same checkout:
+
+```sh
 uv run fluksio run s12_cpu_fit --defaults --sync dev/s12_cpu_fit   # 256×4, batch 32
 uv run fluksio sweep s12_cpu_fit --param n_layers=2
 uv run fluksio sweep s12_cpu_fit --param select=top --param steps=2500
 uv run fluksio sweep s12_cpu_fit --param n_layers=8 --param steps=2000
 uv run fluksio sweep s12_cpu_fit --param dim=128 --param steps=3000
 uv run fluksio sweep s12_cpu_fit --param batch_size=16 --param steps=5000 --param every=1000
-uv run wren --train examples/home.json   # fit at its defaults -> examples/home.bin
+cp wren/home.json home.json
+uv run wren --train home.json   # current fit defaults -> home.bin
 ```
 
-The numbers above come from tag `v1.1.0`. At HEAD the study runs on the
-demo home in `wren/home.json`, which has since gained examples and tests, and
-the last line is `uv run wren --train wren/home.json` (writes `wren/home.bin`).
-`--max-runs 1` keeps runs from sharing the CPU, whose wall time is measured.
+The published numbers above come from tag `v1.1.0`, whose installation was
+`examples/home.json`. To reproduce those inputs, use that tag and path.
+At HEAD the study uses `wren/home.json`, which has gained examples and tests;
+the study still scores generated samples only and uses a constant learning
+rate. The final `wren --train` command uses current `fit`, with cosine decay
+and calibration on installation tests, so its scores can differ.
+`--max-runs 1` keeps runs from sharing the CPU whose wall time is measured.

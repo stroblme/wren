@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.0.1
-      - run: uvx zensical==0.0.46 build --clean --strict
+      - run: uvx zensical==0.0.72 build --clean --strict
       - if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v5
         with:

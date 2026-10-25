@@ -1,10 +1,7 @@
 # Wren's documentation site, built with zensical (https://zensical.org) and
 # published to GitHub Pages by .github/workflows/docs.yml.
-# Preview: uvx zensical==0.0.46 serve
-# docs/ also holds the untracked working notes (NOTEPAD, ROADMAP, ...). A local
-# build renders them off the nav and warns about their links, so --strict only
-# passes in CI. They never reach the published site, which CI builds from the
-# committed files only.
+# Preview: uvx zensical==0.0.72 serve
+# Keep local working notes out of previews and published builds alike.
 
 [project]
 site_name = "Wren"
@@ -12,11 +9,20 @@ site_description = "A tiny attention-only model that turns commands into tool ca
 site_url = "https://stroblme.github.io/wren/"
 repo_url = "https://github.com/stroblme/wren"
 copyright = "Copyright &copy; 2026 Melvin Strobl &middot; MIT"
+exclude_docs = """
+/DECISIONS.md
+/NOTEPAD.md
+/RESEARCH.md
+/ROADMAP.md
+/qfm-relation.md
+"""
 
 # Must stay above the first [project.*] table, or TOML nests it there.
 nav = [
   { "Home" = "index.md" },
   { "How-to" = "guide.md" },
+  { "Reference" = "reference.md" },
+  { "Development" = "development.md" },
 ]
 
 [project.extra]

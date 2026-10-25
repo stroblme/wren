@@ -9,24 +9,29 @@
 </p>
 
 Wren is a small attention-only model that reads bytes and turns short,
-frequent commands into calls on a fixed set of targets, in about 0.05 s on a
-CPU with NumPy. Each installation trains its own model from a list of its
-targets, a few examples and test commands, in about 40 minutes on a CPU.
-Anything Wren is unsure of goes to a larger model that the caller runs beside
-it. Wren is part of the [Fluksio](https://fluksio.com) automation software.
+frequent commands into proposed calls on a fixed set of targets. Each
+installation trains its own model from its targets, examples and test
+commands. Inference needs only NumPy; your application applies accepted
+calls and sends unhandled commands to a larger model. The demo answers in
+about 0.05 s and took roughly 40–60 minutes to train on a 20-core CPU.
+Wren is part of [Fluksio](https://fluksio.com) and also works as a standalone
+library. It is an MIT-licensed research project.
 
 ![Wren architecture](docs/architecture.svg)
 
 ## Usage
 
+You need Python 3.12 or newer and Git. In an activated virtual environment:
+
 ```sh
-pip install git+https://github.com/stroblme/wren
+python -m pip install git+https://github.com/stroblme/wren
 wren "turn on the kitchen light"
 # >> set(kitchen_light, true)  1.00
 ```
 
-The command runs the shipped demo model on its home (`wren/home.json`, 20
-targets). An installation of your own is a JSON file:
+Use the Git URL: the package named `wren` on PyPI is unrelated. The command
+runs the shipped demo model on its home (`wren/home.json`, 20 targets).
+Save an installation of your own as `home.json`:
 
 ```json
 {
@@ -38,44 +43,54 @@ targets). An installation of your own is a JSON file:
     {"command": "close the awning in 10 minutes", "calls": [["canopy", "DOWN", 600]]}
   ],
   "tests": [
+    {"command": "turn on the kitchen light", "calls": [["kitchen_light", true]]},
     {"command": "lower the awning in half an hour", "calls": [["canopy", "DOWN", 1800]]}
   ]
 }
 ```
 
-Train it with `fit` (the `train` extra) or `uv run wren --train home.json`
-(tracked on a local Fluksio engine), then run it:
+Install the training extra to use Python `fit` directly:
+
+```sh
+python -m pip install "wren[train] @ git+https://github.com/stroblme/wren"
+```
+
+Train a pack, then load it for inference:
 
 ```python
 import json
+from pathlib import Path
 
 from wren import Target, act, load_pack
 from wren.train import fit
 
-home = json.load(open("home.json"))
+home = json.loads(Path("home.json").read_text())
 targets = [Target(**t) for t in home["targets"]]
 fit(targets, out="home.bin", examples=home["examples"], tests=home["tests"])
 
 model = load_pack("home.bin")
 calls = act("close the awning in 10 minutes", targets, model=model)
-# [Call(target='canopy', value='DOWN', delay_s=600, confidence=0.89)]
 applied = [c for c in calls if c.confidence >= model["meta"]["threshold"]]
+print(applied)
 ```
 
-The threshold comes from the generated commands the model did not train on
-and from the installation's tests, so it only knows those phrasings. The
+`act` returns calls without executing or filtering them. Your code applies
+the threshold, schedules delays and decides how to handle partial answers.
+The threshold comes from generated evaluation samples and the installation's
+tests; unfamiliar wording can still produce confident errors. The
 [How-to](https://stroblme.github.io/wren/guide/) covers targets, examples,
 tests, the threshold, group targets, learning from the caller's log and the
 demo model's limits.
 
-**C runtime.** `runtime/wren.c` runs a pack without Python, from the prompt
-`act` would build (the targets a command concerns, then the command):
+For manual inspection after training:
 
 ```sh
-cc -O3 -march=native -o wren-rt runtime/wren.c -lm
-./wren-rt wren/wren.bin "$(printf 'canopy=UP\nclose the awning in 10 minutes')"
-# >> set(canopy, DOWN) in 10m
+wren --targets home.json --model home.bin "close the awning in 10 minutes"
 ```
+
+The CLI prints all returned calls and rounded confidences, including calls
+below the threshold. The [Reference](https://stroblme.github.io/wren/reference/)
+lists the API, training options and C runtime usage.
 
 ## Results
 
@@ -88,9 +103,11 @@ trained by `fit` at its defaults (256 wide, 4 layers, 4000 steps of 16) on a
 | 62 min¹ | 1.12M | 535 kB | 52 ms² | generated | 92.7% | 0.97 | 69.8% |
 | | | | | tests | 8 of 18 | | 5 of 18 |
 
-The generated commands are 1000 the model did not train on; coverage counts
-the commands handled exactly right when only calls at or above the threshold
-are applied. The threshold sits just above the most confident wrong answer to
+The 1000 generated evaluation samples use another seed and the same
+templates and examples as training; command wording can overlap. Coverage
+counts samples handled exactly right when only calls at or above the
+threshold are applied, including correct abstentions. The threshold sits
+just above the most confident wrong answer to
 a test ("kill all the lights" switches them all on, at 0.96); on the
 generated commands alone it would be 0.74. The shapes and step budgets
 behind the defaults are in [s12](dev/s12_cpu_fit).
@@ -98,9 +115,8 @@ behind the defaults are in [s12](dev/s12_cpu_fit).
 ¹ End to end on a 20-core CPU shared with other jobs; 41 minutes on an idle
 one. ² Median request with one BLAS thread on an idle machine.
 
-**A public benchmark.** Compared with
-[needle 2](https://cactuscompute.com/needle), the smallest published
-tool-calling model, on
+**A public benchmark.** Historical comparison with
+[needle 2](https://cactuscompute.com/needle) on
 [google/mobile-actions](https://huggingface.co/datasets/google/mobile-actions)
 (all 961 eval rows, ordered strict exact match as in needle's protocol, greedy
 decoding). Wren trains on the 8,693-row train split plus ~2% synthetic
@@ -139,10 +155,22 @@ s1 to s10 run at tag `v1.1.0`, the last version with the home API they use.
 
 ## Setup
 
-`uv sync` sets up a checkout with the training and study dependencies,
-including [Fluksio](https://fluksio.com) for `wren --train` and the studies
-(`uv run fluksio serve` in its own terminal). Training an installation runs
-on the CPU; the studies s1 to s10 need a CUDA GPU (`uv sync --group cuda12`).
+For CLI training and development, install
+[uv](https://docs.astral.sh/uv/getting-started/installation/) and clone the repo:
+
+```sh
+git clone https://github.com/stroblme/wren.git
+cd wren
+uv sync --locked
+uv run fluksio serve
+```
+
+Keep the engine running, then use `uv run wren --train home.json` in another
+terminal in the checkout. This records the training run and saves `home.bin`.
+The default environment includes training, study and quality-check tools;
+inference and Python `fit` can run without Fluksio. See
+[Development](https://stroblme.github.io/wren/development/) for CPU/GPU setup,
+tests, documentation builds and historical study reproduction.
 
 ## Data
 

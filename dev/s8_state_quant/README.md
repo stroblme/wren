@@ -34,9 +34,10 @@ blocks to relevant areas.
   reaches 91.0% exact and ternary 89.8%, both 99.7% ID-copy. Each configuration
   uses one seed.
 - The pruned fp32 run was `wren/weights.npz` until Wren 2.0. The pruned
-  ternary run (`runtime/weights-qat.npz`) packed into `wren/wren.bin`, run by
-  the library and `runtime/wren.c` (12.5 MB RSS, 1447 B/s in C). A mobile
-  ternary run is the README's QAT row.
+  ternary run used `runtime/weights-qat.npz`, packed into `wren/wren.bin`
+  at the time (12.5 MB RSS, 1447 B/s in C). These source checkpoints no
+  longer ship; Wren 2.0's pack is trained on the installation target API.
+  A mobile ternary run is the repository README's historical QAT row.
 
 ## Reproduce
 
