@@ -95,9 +95,8 @@ def train_run(args: argparse.Namespace) -> None:
     except ImportError:  # fluksio is a dev-group dependency; so is training.
         sys.exit("wren --train needs fluksio: `uv sync --group dev`")
 
-    # Absolute: the worker reads the file from its own working directory.
-    installation = pathlib.Path(args.train).resolve()
-    params: dict[str, Any] = {"installation": str(installation)}
+    installation = pathlib.Path(args.train)
+    params: dict[str, Any] = {"installation": installation.read_text()}
     params |= {name: getattr(args, name) for name in DEFAULTS}
 
     try:

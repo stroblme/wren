@@ -276,6 +276,8 @@ ignores the pack's metadata.
 
 Fluksio's `wren` node runs Wren on typed or spoken commands. The devices
 wired to the node are the only ones it can reach, and commands it is unsure
-of go on to Fluksio's assistant. The
-[node reference](https://docs.fluksio.com/reference/node-types/#wren) covers
-its settings.
+of go on to Fluksio's assistant. Its Train button trains a model on those
+devices and the node's examples and tests, as a run of this repository's
+training flow (`wren/flow.py`), registered once with `fluksio sync wren.flow`.
+The [node reference](https://docs.fluksio.com/reference/node-types/#wren)
+covers its settings and what training needs.

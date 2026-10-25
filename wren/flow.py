@@ -52,14 +52,14 @@ def fit(
     precision: float,
     seed: int,
 ) -> dict:
-    """Train on an installation's JSON file (`targets`, `examples`, `tests`) with
-    `wren.train.fit`."""
+    """Train on an installation, the text of its JSON (`targets`, `examples`,
+    `tests`), with `wren.train.fit`."""
     import json
 
     from wren import train
     from wren.targets import Target
 
-    data = json.loads(pathlib.Path(installation).read_text())
+    data = json.loads(installation)
     path = pathlib.Path(tempfile.mkdtemp()) / "wren.bin"
     result = train.fit(
         [Target(**t) for t in data["targets"]],
@@ -88,7 +88,8 @@ FLOW = Flow(
     NAME,
     title="wren --train",
     nodes=[fit],
-    # The installation travels as a path, for the worker to read.
+    # The installation travels as its text: the run records what it trained
+    # on, and a worker on another machine reads it all the same.
     inputs=[Port("installation", "str"), *PORTS],
     outputs=["final_loss", "n_params", "exact_match", "threshold", "coverage"],
 )
