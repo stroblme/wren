@@ -184,6 +184,25 @@ def test_threshold_unreachable_or_empty_applies_nothing():
     assert threshold([[], []], [[], []]) == math.inf
 
 
+def test_threshold_holds_on_each_set_at_once():
+    # Apart, A reaches 0.99 from 0.1 and B from 0.9. Their higher one, 0.9,
+    # leaves A one right and one wrong call: 0.99 is the first that holds.
+    set_a = (
+        [[TCall("a", True, confidence=0.1)]] * 99
+        + [[TCall("a", False, confidence=0.95)], [TCall("a", True, confidence=0.99)]],
+        [[TCall("a", True)]] * 101,
+    )
+    set_b = (
+        [[TCall("a", False, confidence=0.8)], [TCall("a", True, confidence=0.9)]],
+        [[TCall("a", True)]] * 2,
+    )
+    assert threshold(*set_a) == 0.1
+    assert threshold(*set_b) == 0.9
+    assert threshold(*set_a, also=[set_b]) == 0.99
+    # Tests on which the model makes no call apply nothing wrong.
+    assert threshold(*set_a, also=[([[]], [[]])]) == 0.1
+
+
 def test_coverage():
     assert coverage(PREDICTED, EXPECTED, 0.7) == 4 / 5  # never sets b to 3
     assert coverage(PREDICTED, EXPECTED, 0.8) == 3 / 5  # drops a needed call
@@ -191,7 +210,7 @@ def test_coverage():
     assert coverage(PREDICTED, EXPECTED, math.inf) == 2 / 5  # only abstentions
 
 
-def test_evaluate_takes_the_higher_threshold_of_generated_and_tests(monkeypatch):
+def test_evaluate_holds_the_threshold_on_generated_and_tests(monkeypatch):
     replies = {
         "g1": [TCall("a", True, confidence=0.5)],
         "g2": [TCall("b", 1, confidence=0.9)],

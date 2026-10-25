@@ -105,12 +105,18 @@ def test_multi_target_and_delays(home):
     assert any(len({c.value for c in calls}) == 2 for _, _, calls in home)
     delayed = [(c, calls) for c, _, calls in home if calls and calls[0].delay_s]
     assert len(delayed) > 100
+    counts = []
     for command, calls in delayed:
         # Said in the unit `answer` writes, so the model copies number and unit.
-        said = re.search(r" in (\d+) (second|minute|hour)s?$", command)
+        said = re.search(r" in (\d+|an?) (second|minute|hour)s?$", command)
         assert said
         n, unit = said.groups()
+        n = "1" if n in ("a", "an") else n
         assert answer(calls).endswith(f" in {n}{unit[0]}\n\n")
+        counts.append(said[1])
+    # Single digits and "a minute" are said often, not one count in ten.
+    assert sum(len(n) == 1 for n in counts) > len(counts) / 4
+    assert {"a", "an"} <= set(counts)
 
 
 def test_start_and_stop_say_on_and_off(home):

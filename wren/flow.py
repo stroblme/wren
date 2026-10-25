@@ -5,6 +5,7 @@ engine records parameters, loss, held-out scores and the pack; training
 uses `wren.train.fit`.
 """
 
+import inspect
 import pathlib
 import tempfile
 
@@ -14,6 +15,15 @@ from fluksio import Flow, Port, node
 from wren.train import DEFAULTS
 
 NAME = "wren_train"
+
+# ponytail: fluksio 0.1.6 (PyPI) names the option `device`, later ones
+# `worker`; an SDK without `worker` trains on the engine. Pass it directly
+# once wren requires a fluksio release that has it.
+PLACEMENT = (
+    {"worker": "wren", "worker_policy": "prefer"}
+    if "worker" in inspect.signature(node).parameters
+    else {}
+)
 
 #: One input per knob; the CLI spells the same names `--dim`, `--lr`, ...
 PORTS = [
@@ -38,6 +48,9 @@ PORTS = [
     # preallocate=false leaves room beside a study holding the same card --
     # jax otherwise takes 75% of it at import.
     resources={"env": {"XLA_PYTHON_CLIENT_PREALLOCATE": "false"}},
+    # A worker labelled `wren` takes the training off the engine machine,
+    # which may be a small controller. Without one it trains on the engine.
+    **PLACEMENT,
 )
 def fit(
     installation: str,

@@ -216,6 +216,14 @@ _CHATTER = [t.format(s) for t, slots in _IRRELEVANT.items() for s in slots]
 _UNITS = [("second", 1), ("minute", 60), ("hour", 3600)]
 _COUNTS = {1: [k for k in range(1, 91) if k % 60], 3600: list(range(1, 25))}
 _COUNTS[60] = _COUNTS[1]
+# Half the delays draw from the counts people say most. Drawn evenly, a
+# single digit is one count in ten, and the model writes "5" as `55`.
+_SAID_MOST = {
+    size: [k for k in (*range(1, 11), 15, 20, 30, 45) if k in counts]
+    for size, counts in _COUNTS.items()
+}
+# A count of one is as often "a minute" as "1 minute".
+_ONE = {"second": "a second", "minute": "a minute", "hour": "an hour"}
 # Sample kinds and their shares; the share of delayed commands.
 _MIX = {"single": 50, "group": 10, "joined": 10, "unknown": 10, "chatter": 10}
 _MIX["example"] = 10
@@ -299,8 +307,8 @@ def corpus(
         delayable = kind in ("single", "group") and calls[0].value is not None
         if delayable and rng.random() < _DELAY_SHARE:
             unit, size = rng.choice(_UNITS)
-            k = rng.choice(_COUNTS[size])
-            said = f"{k} {unit}{'s' if k > 1 else ''}"
+            k = rng.choice(_COUNTS[size] if rng.random() < 0.5 else _SAID_MOST[size])
+            said = f"{k} {unit}s" if k > 1 else rng.choice([f"1 {unit}", _ONE[unit]])
             if isinstance(calls[0].value, bool) and rng.random() < 0.5:
                 # A duration: the value now, the opposite once it is over.
                 command += f" for {said}"

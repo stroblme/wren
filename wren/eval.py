@@ -131,24 +131,45 @@ def threshold(
     predicted: list[list[targets.Call]],
     expected: list[list[targets.Call]],
     precision: float = 0.99,
+    also: Sequence[tuple[list[list[targets.Call]], list[list[targets.Call]]]] = (),
 ) -> float:
     """Return the lowest confidence at which applied calls reach `precision`.
 
     A host applies each call whose confidence is at least the threshold. A
     call is right if its sample expects it (same target, value and delay, in
-    any order), so any call on a sample that should abstain is wrong. Return
+    any order), so any call on a sample that should abstain is wrong. Each
+    (predicted, expected) set in `also` has to reach `precision` at the same
+    threshold, checked on its own, where a set with no call left applies
+    nothing wrong. Precision need not rise with the threshold, so the higher
+    of two thresholds found apart can miss it on the other set. Return
     infinity, which applies nothing, when no threshold reaches `precision`.
     """
+    conf, right = _marks(predicted, expected)
+    others = [_marks(p, e) for p, e in also]
+    for t in np.unique(np.concatenate([conf, *(c for c, _ in others)])):  # ascending
+        applied = conf >= t
+        if (
+            applied.any()
+            and right[applied].mean() >= precision
+            and all(
+                not (sel := c >= t).any() or r[sel].mean() >= precision
+                for c, r in others
+            )
+        ):
+            return float(t)
+    return math.inf
+
+
+def _marks(
+    predicted: list[list[targets.Call]], expected: list[list[targets.Call]]
+) -> tuple[np.ndarray, np.ndarray]:
+    """Each predicted call's confidence, and whether its sample expects it."""
     conf, right = [], []
     for pred, exp in zip(predicted, expected, strict=True):
         want = {_key(c) for c in exp}
         conf += [c.confidence for c in pred]
         right += [_key(c) in want for c in pred]
-    conf, right = np.array(conf), np.array(right, dtype=bool)
-    for t in np.unique(conf):  # ascending
-        if right[conf >= t].mean() >= precision:
-            return float(t)
-    return math.inf
+    return np.array(conf, dtype=float), np.array(right, dtype=bool)
 
 
 def coverage(
@@ -177,18 +198,16 @@ def evaluate(
     """Run `act` with `pack` on (command, targets, expected calls) samples.
 
     `cases` are generated samples, `tests` an installation's own commands.
-    The threshold is the higher of the two `threshold` recommends at
-    `precision`, so applied calls reach it on both: pooled into a thousand
-    generated samples, a few tests' wrong calls would fit in the allowance.
+    The threshold is the lowest at which applied calls reach `precision` on
+    each set on its own: pooled into a thousand generated samples, a few
+    tests' wrong calls would fit in the allowance.
     Return the exact match (every call right, no other, at any confidence),
     the threshold and the coverage there, and with tests their exact match
     and coverage as `test_exact_match` and `test_coverage`.
     """
     predicted, expected = _run(pack, cases)
     tested, wanted = _run(pack, tests)
-    t = threshold(predicted, expected, precision)
-    if tests:
-        t = max(t, threshold(tested, wanted, precision))
+    t = threshold(predicted, expected, precision, also=[(tested, wanted)])
     scores = {
         "exact_match": coverage(predicted, expected, 0.0),
         "threshold": t,
