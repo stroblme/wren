@@ -17,8 +17,6 @@ about 0.05 s and took roughly 40–60 minutes to train on a 20-core CPU.
 Wren is part of [Fluksio](https://fluksio.com) and also works as a standalone
 library. It is an MIT-licensed research project.
 
-![Wren architecture](docs/architecture.svg)
-
 ## Usage
 
 You need Python 3.12 or newer and Git. In an activated virtual environment:
