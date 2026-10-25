@@ -50,6 +50,10 @@ artifacts = ["wren/wren.bin"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff.lint.isort]
+# Archived studies import wren.home, which was removed in 2.0.
+known-first-party = ["wren"]
+
 [tool.ty.src]
 # Studies that use the home API removed in 2.0.0. Their code runs at tag
 # v1.1.0, as each README's Reproduce section says, and is not checked here.
