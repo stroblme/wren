@@ -1,8 +1,18 @@
 import math
 
+import pytest
+
 from wren import targets
 from wren.dataset import _render_mobile_actions, render_call, to_text
-from wren.eval import coverage, evaluate, parse_calls, score, threshold
+from wren.eval import (
+    coverage,
+    evaluate,
+    metrics,
+    parse_calls,
+    score,
+    selection,
+    threshold,
+)
 from wren.targets import Call as TCall
 from wren.targets import Target
 
@@ -163,8 +173,8 @@ EXPECTED = [e for _, e in HELD_OUT]
 
 def test_threshold_meets_precision():
     # Applied precision: 0.6 from 0.4, 0.75 from 0.6, 1.0 from 0.7.
-    assert threshold(PREDICTED, EXPECTED) == 0.7
-    assert threshold(PREDICTED, EXPECTED, precision=0.75) == 0.6
+    assert threshold(PREDICTED, EXPECTED) == pytest.approx(0.65)
+    assert threshold(PREDICTED, EXPECTED, precision=0.75) == 0.5
     assert threshold(PREDICTED, EXPECTED, precision=0.5) == 0.4
 
 
@@ -174,7 +184,7 @@ def test_threshold_counts_wrong_delay_and_extra_calls():
         [TCall("a", True, confidence=0.9)],  # missing delay
         [TCall("a", True, confidence=0.8), TCall("b", 1, confidence=0.7)],  # extra
     ]
-    assert threshold(predicted, expected, precision=0.5) == 0.8
+    assert threshold(predicted, expected, precision=0.5) == 0.75
 
 
 def test_threshold_unreachable_or_empty_applies_nothing():
@@ -197,8 +207,8 @@ def test_threshold_holds_on_each_set_at_once():
         [[TCall("a", True)]] * 2,
     )
     assert threshold(*set_a) == 0.1
-    assert threshold(*set_b) == 0.9
-    assert threshold(*set_a, also=[set_b]) == 0.99
+    assert threshold(*set_b) == pytest.approx(0.85)
+    assert threshold(*set_a, also=[set_b]) == 0.97
     # Tests on which the model makes no call apply nothing wrong.
     assert threshold(*set_a, also=[([[]], [[]])]) == 0.1
 
@@ -210,7 +220,7 @@ def test_coverage():
     assert coverage(PREDICTED, EXPECTED, math.inf) == 2 / 5  # only abstentions
 
 
-def test_evaluate_holds_the_threshold_on_generated_and_tests(monkeypatch):
+def test_evaluate_does_not_calibrate_on_test_answers(monkeypatch):
     replies = {
         "g1": [TCall("a", True, confidence=0.5)],
         "g2": [TCall("b", 1, confidence=0.9)],
@@ -222,15 +232,82 @@ def test_evaluate_holds_the_threshold_on_generated_and_tests(monkeypatch):
     generated = [("g1", state, [TCall("a", True)]), ("g2", state, [TCall("b", 1)])]
     tests = [("t1", state, [TCall("a", True)]), ("t2", state, [TCall("a", True)])]
 
-    assert evaluate({}, generated) == {
-        "exact_match": 1.0,
-        "threshold": 0.5,
-        "coverage": 1.0,
-    }
-    assert evaluate({}, generated, tests=tests) == {
-        "exact_match": 1.0,
-        "threshold": 0.8,  # the tests', above their wrong call
-        "coverage": 0.5,  # g1 is no longer applied
-        "test_exact_match": 0.5,
-        "test_coverage": 0.5,
-    }
+    pack = {"cfg": {"context": 384}}
+    result = evaluate(pack, generated, calibration=generated, tests=tests)
+    assert result["threshold"] == 0.5  # unaffected by the wrong test call
+    assert result["coverage"] == 1.0
+    assert result["test_exact_match"] == result["test_coverage"] == 0.5
+    assert result["tests"]["wrong_commands"] == 1
+    # Installation calibration commands are checked separately from generated ones.
+    result = evaluate(pack, generated, calibration=generated, calibration_tests=tests)
+    assert result["threshold"] == 0.75
+    assert result["coverage"] == 0.5
+
+
+def test_metrics_distinguish_call_precision_and_complete_commands():
+    start = TCall("pump", True, confidence=0.99)
+    stop = TCall("pump", False, 60, confidence=0.6)
+    result = metrics([[start, stop], [], [start]], [[start, stop], [], []], 0.9)
+    assert result["n"] == 3
+    assert result["coverage"] == 1 / 3  # only the correct abstention
+    assert result["positive_coverage"] == 0
+    assert result["call_precision"] == 0.5
+    assert result["command_precision"] == 0
+    assert result["partial_commands"] == 1
+    assert result["wrong_commands"] == 1
+    assert result["accepted_commands"] == 2
+    assert result["by_kind"]["duration"]["partial_commands"] == 1
+    assert result["by_kind"]["abstain"]["n"] == 2
+
+
+def test_metrics_empty_denominators_are_explicit():
+    result = metrics([[]], [[]], math.inf)
+    assert result["positive_coverage"] is None
+    assert result["call_precision"] is None
+    assert result["command_precision"] is None
+    assert result["coverage"] == 1
+    assert metrics([], [], 0)["coverage"] is None
+
+
+def test_threshold_has_room_for_small_runtime_roundoff():
+    predictions = [
+        [TCall("pump", True, confidence=0.973)],
+        [TCall("pump", False, confidence=0.96)],
+    ]
+    expected = [[TCall("pump", True)]] * 2
+    t = threshold(predictions, expected)
+    assert 0.96 < t < 0.973
+    predictions[0][0].confidence -= 2e-7
+    assert metrics(predictions, expected, t)["call_precision"] == 1.0
+
+
+def test_answer_calibration_counts_an_unemitted_stop_as_incorrect():
+    start = TCall("pump", True, confidence=0.99)
+    stop = TCall("pump", False, 60, confidence=0.8)
+    assert math.isinf(threshold([[start]], [[start, stop]], policy="answer"))
+    # A complete answer can pass while a more uncertain incomplete one does not.
+    wrong = TCall("pump", True, confidence=0.7)
+    t = threshold([[wrong], [start, stop]], [[start, stop]] * 2, policy="answer")
+    assert 0.7 < t < 0.8
+    result = metrics([[wrong], [start, stop]], [[start, stop]] * 2, t, policy="answer")
+    assert result["coverage"] == 0.5
+    assert result["command_precision"] == 1.0
+    assert result["partial_commands"] == 0
+
+
+def test_selection_reports_hidden_calls_state_and_length_limits():
+    state = [
+        Target("pump", "bool", False),
+        Target("location", "str", "lab", readonly=True),
+    ]
+    cases = [
+        ("pump on", state, [TCall("pump", True)]),
+        ("too dark", state, [TCall("pump", True)]),
+        ("pump " * 100, state, [TCall("pump", True)]),
+    ]
+    result = selection(cases, required_state=[{"location"}, set(), set()])
+    assert result["target_recall"] == 1 / 3
+    assert result["state_recall"] == 0
+    assert result["prompt_overflow"] == 1
+    assert result["failures"][0]["missing_state"] == ["location"]
+    assert result["failures"][1]["missing_targets"] == ["pump"]

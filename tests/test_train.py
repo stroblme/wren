@@ -53,6 +53,7 @@ def test_fit_writes_a_pack_that_act_runs(tmp_path):
         steps=400,
         n_train=3000,
         n_eval=60,
+        n_calibration=60,
     )
 
     assert asked  # the hook reaches the training corpus
@@ -60,10 +61,16 @@ def test_fit_writes_a_pack_that_act_runs(tmp_path):
     assert [t["name"] for t in pack["meta"]["targets"]] == ["pump", "ph"]
     assert all("value" not in t for t in pack["meta"]["targets"])
     assert pack["meta"]["threshold"] == result["threshold"]
+    assert pack["meta"]["acceptance"] == "answer"
     assert pack["meta"]["test_exact_match"] == result["test_exact_match"]
     assert math.isfinite(result["threshold"])
-    assert 0 < result["coverage"] <= result["exact_match"] <= 1
-    assert 0 <= result["test_coverage"] <= result["test_exact_match"] <= 1
+    assert 0 <= result["coverage"] <= 1
+    assert 0 <= result["exact_match"] <= 1
+    assert result["calibration"]["command_precision"] >= 0.99
+    assert (
+        pack["meta"]["evaluation"]["positive_coverage"] == result["positive_coverage"]
+    )
+    assert 0 <= result["test_coverage"] <= 1
     calls = act("turn on the pump", LAB, model=pack)
     assert all(c.target in ("pump", "ph") for c in calls)
 
@@ -72,5 +79,11 @@ def test_fit_refuses_a_model_below_the_precision(tmp_path):
     out = tmp_path / "lab.bin"
     # One step: the model writes no answer that parses, so no call is right.
     with pytest.raises(RuntimeError, match="precision 0.99"):
-        tiny_fit(LAB, out=out, steps=1, n_train=300, n_eval=20)
+        tiny_fit(LAB, out=out, steps=1, n_train=300, n_eval=20, n_calibration=20)
     assert not out.exists()
+
+
+def test_fit_rejects_shared_installation_commands_before_training(tmp_path):
+    record = {"command": "start the pump", "calls": [["pump", True]]}
+    with pytest.raises(ValueError, match="distinct commands"):
+        tiny_fit(LAB, out=tmp_path / "lab.bin", examples=[record], tests=[record])

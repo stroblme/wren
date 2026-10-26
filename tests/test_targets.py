@@ -210,3 +210,37 @@ def test_act_fits_the_prompt_to_the_pack_context(monkeypatch):
     monkeypatch.setattr("wren.runtime.generate", generate)
     assert act("turn off all lights", HOME, model={"cfg": {"context": 160}}) == []
     assert 0 < seen[0] <= 160 - N_NEW
+
+
+def test_accept_keeps_a_duration_together():
+    from wren import accept
+
+    calls = [Call("pump", True, confidence=0.99), Call("pump", False, 60, 0.8)]
+    pack = {"meta": {"threshold": 0.9, "acceptance": "answer"}}
+    assert accept(calls, model=pack) == []
+    assert accept([], model=pack) == []
+    pack["meta"]["threshold"] = 0.75
+    assert accept(calls, model=pack) == calls
+
+
+def test_accept_preserves_the_policy_of_older_packs():
+    from wren import accept
+
+    calls = [Call("pump", True, confidence=0.99), Call("pump", False, 60, 0.8)]
+    assert accept(calls, model={"meta": {"threshold": 0.9}}) == calls[:1]
+
+
+def test_selection_skips_an_oversized_line_and_keeps_a_later_target():
+    state = [Target("pump_mode", "str", "x" * 400), Target("pump", "bool", False)]
+    assert names(select(state, "pump on")) == ["pump"]
+
+
+def test_act_does_not_truncate_an_overlong_command(monkeypatch):
+    def generate(*args):
+        raise AssertionError("an overlong command must not reach generation")
+
+    monkeypatch.setattr("wren.runtime.generate", generate)
+    assert (
+        act("don't " + "turn on the pump " * 30, LAB, model={"cfg": {"context": 384}})
+        == []
+    )
