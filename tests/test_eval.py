@@ -173,9 +173,19 @@ EXPECTED = [e for _, e in HELD_OUT]
 
 def test_threshold_meets_precision():
     # Applied precision: 0.6 from 0.4, 0.75 from 0.6, 1.0 from 0.7.
-    assert threshold(PREDICTED, EXPECTED) == pytest.approx(0.65)
-    assert threshold(PREDICTED, EXPECTED, precision=0.75) == 0.5
-    assert threshold(PREDICTED, EXPECTED, precision=0.5) == 0.4
+    assert threshold(PREDICTED, EXPECTED) == pytest.approx(0.7, abs=1e-5)
+    assert threshold(PREDICTED, EXPECTED, precision=0.75) == pytest.approx(
+        0.6, abs=1e-5
+    )
+    assert threshold(PREDICTED, EXPECTED, precision=0.5) == pytest.approx(0.4, abs=1e-5)
+
+
+def test_threshold_stays_next_to_the_lowest_accepted_score():
+    # The gap down to a wrong answer at 0.4 is no evidence for scores in it.
+    predicted = [[TCall("a", False, confidence=0.4)]]
+    predicted += [[TCall("a", True, confidence=0.98)]] * 10
+    t = threshold(predicted, [[TCall("a", True)]] * 11)
+    assert 0.979 < t < 0.98
 
 
 def test_threshold_counts_wrong_delay_and_extra_calls():
@@ -184,7 +194,7 @@ def test_threshold_counts_wrong_delay_and_extra_calls():
         [TCall("a", True, confidence=0.9)],  # missing delay
         [TCall("a", True, confidence=0.8), TCall("b", 1, confidence=0.7)],  # extra
     ]
-    assert threshold(predicted, expected, precision=0.5) == 0.75
+    assert threshold(predicted, expected, precision=0.5) == pytest.approx(0.8, abs=1e-5)
 
 
 def test_threshold_unreachable_or_empty_applies_nothing():
@@ -206,11 +216,11 @@ def test_threshold_holds_on_each_set_at_once():
         [[TCall("a", False, confidence=0.8)], [TCall("a", True, confidence=0.9)]],
         [[TCall("a", True)]] * 2,
     )
-    assert threshold(*set_a) == 0.1
-    assert threshold(*set_b) == pytest.approx(0.85)
-    assert threshold(*set_a, also=[set_b]) == 0.97
+    assert threshold(*set_a) == pytest.approx(0.1, abs=1e-5)
+    assert threshold(*set_b) == pytest.approx(0.9, abs=1e-5)
+    assert threshold(*set_a, also=[set_b]) == pytest.approx(0.99, abs=1e-5)
     # Tests on which the model makes no call apply nothing wrong.
-    assert threshold(*set_a, also=[([[]], [[]])]) == 0.1
+    assert threshold(*set_a, also=[([[]], [[]])]) == pytest.approx(0.1, abs=1e-5)
 
 
 def test_coverage():
@@ -234,13 +244,15 @@ def test_evaluate_does_not_calibrate_on_test_answers(monkeypatch):
 
     pack = {"cfg": {"context": 384}}
     result = evaluate(pack, generated, calibration=generated, tests=tests)
-    assert result["threshold"] == 0.5  # unaffected by the wrong test call
+    assert result["threshold"] == pytest.approx(
+        0.5, abs=1e-5
+    )  # unaffected by the wrong test call
     assert result["coverage"] == 1.0
     assert result["test_exact_match"] == result["test_coverage"] == 0.5
     assert result["tests"]["wrong_commands"] == 1
     # Installation calibration commands are checked separately from generated ones.
     result = evaluate(pack, generated, calibration=generated, calibration_tests=tests)
-    assert result["threshold"] == 0.75
+    assert result["threshold"] == pytest.approx(0.8, abs=1e-5)
     assert result["coverage"] == 0.5
 
 

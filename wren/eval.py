@@ -147,9 +147,10 @@ def threshold(
     With `policy="answer"`, score each nonempty answer once, at its minimum
     call confidence; it is right only when every expected call is present
     and no extra call is generated.
-    Place the cutoff between adjacent observed scores so tiny numerical
-    changes do not reject a call sitting exactly on it. Return infinity,
-    which applies nothing, when no threshold reaches `precision`.
+    Place the cutoff 1e-6 below that score, never past half way to the
+    next lower one, so float32 roundoff does not reject a call sitting
+    exactly on it and no score calibration rejected is accepted. Return
+    infinity, which applies nothing, when no threshold reaches `precision`.
     """
     conf, right = _marks(predicted, expected, policy)
     others = [_marks(p, e, policy) for p, e in also]
@@ -164,8 +165,8 @@ def threshold(
                 for c, r in others
             )
         ):
-            lower = candidates[i - 1] if i else t
-            return float(lower + (t - lower) / 2)
+            lower = candidates[i - 1] if i else -math.inf
+            return float(t - min(1e-6, (t - lower) / 2))
     return math.inf
 
 

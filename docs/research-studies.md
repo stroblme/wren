@@ -69,7 +69,8 @@ compares the shapes and step budgets behind the training defaults.
 ## Accuracy improvements, 2026-10-25
 
 [s13](https://github.com/stroblme/wren/tree/dev/dev/s13_accuracy) adds
-independent calibration, complete-command metrics, negation/timing data,
+separate calibration (drawn like the training data, so most of its commands
+were seen in training), complete-command metrics, negation/timing data,
 whole-answer acceptance and selection audits. New packs default to accepting
 every generated call together or rejecting the answer. The shipped pack's
 policy is unchanged.

@@ -4,8 +4,8 @@
 a pack on an installation's targets and prints each call with its
 confidence. By default it runs the shipped demo model on the demo home it
 learnt (`wren/home.json`). `wren --train home.json` runs the Fluksio training
-flow on an installation's targets, examples and tests and writes the model's
-pack beside it, as `home.bin`.
+flow on an installation's targets, examples, calibration and tests and writes
+the model's pack beside it, as `home.bin`.
 """
 
 import argparse
@@ -42,8 +42,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--train",
         metavar="JSON",
-        help="train on an installation's targets, examples and tests; write the "
-        "pack as .bin (`wren --train JSON --help` lists the training flags)",
+        help="train on an installation's targets, examples, calibration and tests; "
+        "write the pack as .bin (`wren --train JSON --help` lists the training "
+        "flags)",
     )
     # `--dim`, `--steps`, ... come from `fit`, whose module needs JAX, so
     # only a training command gets them.

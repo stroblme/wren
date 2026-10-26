@@ -69,7 +69,7 @@ def fit(
     seed: int,
 ) -> dict:
     """Train on an installation, the text of its JSON (`targets`, `examples`,
-    `tests`), with `wren.train.fit`."""
+    `calibration`, `tests`), with `wren.train.fit`."""
     import json
 
     from wren import train

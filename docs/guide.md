@@ -121,8 +121,10 @@ representative commands, including negations, delays and durations, with
 wording distinct from both examples and tests. `fit` uses these records and
 a separate generated calibration set to choose the threshold. It checks the
 two sets separately so the larger generated set cannot hide errors in the
-installation's commands. Examples, calibration and tests must not share
-exact command texts.
+installation's commands. The generated set is drawn like the training data
+and shares most of its commands, so it measures the wording the generator
+knows. Your records, which training never sees, measure your own. Examples,
+calibration and tests must not share exact command texts.
 
 ## Train
 
@@ -176,8 +178,8 @@ coverage and partial/wrong accepted commands as well as aggregate coverage,
 which includes correct abstentions.
 
 The pack stores the target definitions without current values, the
-threshold, requested precision, steps, date and test exact match when tests
-are supplied. Compare `load_pack(path)["meta"]["targets"]` with your current
+threshold, requested precision, acceptance policy, steps, date, seed, split
+sizes, evaluation metrics and test exact match when tests are supplied. Compare `load_pack(path)["meta"]["targets"]` with your current
 definitions when deciding whether to retrain. Wren does not check that match
 automatically. Changing current values does not require retraining.
 
@@ -236,8 +238,8 @@ With the default `acceptance="answer"`, `fit` calibrates `precision`
 answer incorrect, as does an extra call or a wrong target, value or delay.
 `acceptance="call"` retains the previous per-call criterion. Calibration
 selects the most permissive observed acceptance set meeting the requested
-precision on each calibration set, placing the threshold between adjacent
-scores when possible. If none qualifies, `fit` raises and writes no model.
+precision on each calibration set, placing the threshold just below the
+lowest accepted score. If none qualifies, `fit` raises and writes no model.
 Independent test results are reported without changing that threshold;
 review them before replacing an installation's model.
 

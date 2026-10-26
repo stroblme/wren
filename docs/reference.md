@@ -179,8 +179,9 @@ and negative tests to measure useful coverage and incorrect actions.
 The pack's metadata stores `targets` (without current values), `threshold`,
 `precision`, `acceptance`, `steps`, `date` (UTC date), evaluation metrics,
 split sizes/seed, and `test_exact_match` when tests are supplied.
-It does not store the examples, test records, complete training
-configuration or optimizer state. Keep the installation JSON and training
+It does not store the examples, complete training configuration or
+optimizer state. The evaluation metrics name the commands of failed tests
+and failed generated samples. Keep the installation JSON and training
 settings with the pack. `fit` always starts a new model; it does not resume
 from a pack.
 
