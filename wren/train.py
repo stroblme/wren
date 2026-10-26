@@ -19,7 +19,7 @@ from flax import nnx
 
 from wren import runtime, tokenizer
 from wren.dataset import as_case, corpus, text
-from wren.eval import evaluate
+from wren.eval import evaluate, selection
 from wren.export import export
 from wren.model import Config, Wren, save
 from wren.targets import Target
@@ -57,11 +57,18 @@ def sample_batch(
 
 @nnx.jit
 def train_step(
-    model: Wren, optimizer: nnx.Optimizer, x: jax.Array, y: jax.Array
+    model: Wren,
+    optimizer: nnx.Optimizer,
+    x: jax.Array,
+    y: jax.Array,
+    weights: jax.Array | None = None,
 ) -> jax.Array:
     def loss_fn(model: Wren) -> jax.Array:
         logits = model(x)
-        return optax.softmax_cross_entropy_with_integer_labels(logits, y).mean()
+        loss = optax.softmax_cross_entropy_with_integer_labels(logits, y)
+        return (
+            loss.mean() if weights is None else (loss * weights).sum() / weights.sum()
+        )
 
     loss, grads = nnx.value_and_grad(loss_fn)(model)
     optimizer.update(model, grads)
@@ -103,6 +110,7 @@ def fit(
     *,
     out: str | pathlib.Path,
     examples: Sequence[dict] = (),
+    calibration: Sequence[dict] = (),
     tests: Sequence[dict] = (),
     paraphrase: Callable[[str], list[str]] | None = None,
     dim: int = 256,
@@ -113,7 +121,9 @@ def fit(
     lr: float = 3e-3,
     n_train: int = 200_000,
     n_eval: int = 1000,
+    n_calibration: int = 1000,
     precision: float = 0.99,
+    acceptance: str = "answer",
     seed: int = 0,
     on_log: Callable[[int, float], None] | None = None,
 ) -> dict:
@@ -121,25 +131,53 @@ def fit(
 
     Trains from scratch, quantization-aware, on `n_train` samples of
     `wren.dataset.corpus` (with the installation's `examples`, widened by
-    `paraphrase` if given; the held-out samples are not), then runs
-    `act` with the pack on `n_eval` held-out samples drawn with seed + 1 and
-    on the installation's `tests` (shaped like `examples`, never trained on).
-    The threshold is the higher of those `wren.eval.threshold` recommends at
-    `precision` on each (`wren.eval.evaluate`). The pack's metadata holds the
-    targets without their values, the threshold, the tests' exact match, the
-    steps and the date. Raise RuntimeError and write nothing if no threshold
-    reaches `precision`.
+    `paraphrase` if given). Calibrate on `n_calibration` samples (seed + 1)
+    and optional installation `calibration` records, checked separately.
+    Evaluate the frozen threshold on `n_eval` samples with held-out phrasing
+    families (seed + 2) and the installation's `tests`. Reserved command
+    texts never enter training, including through a paraphraser. Test
+    answers cannot change the threshold. Raise RuntimeError and write
+    nothing if no threshold reaches calibration `precision`.
 
     Return the held-out exact match, threshold and coverage, the tests'
     exact match and coverage if given, the final loss, the parameter count
     and the wall time in seconds.
     """
     start = datetime.datetime.now(datetime.UTC)
-    cases = corpus(
-        targets, n=n_train, seed=seed, examples=examples, paraphrase=paraphrase
-    )
-    held_out = corpus(targets, n=n_eval, seed=seed + 1, examples=examples)
+    if acceptance not in ("answer", "call"):
+        raise ValueError("acceptance must be answer or call")
+    reserved = {r["command"] for r in [*calibration, *tests]}
+    if {r["command"] for r in examples} & reserved or (
+        {r["command"] for r in calibration} & {r["command"] for r in tests}
+    ):
+        raise ValueError("examples, calibration and tests must use distinct commands")
+    calibrated = [as_case(targets, t) for t in calibration]
     tested = [as_case(targets, t) for t in tests]
+    corpus_counts: dict[str, int] = {}
+    cases = corpus(
+        targets,
+        n=n_train,
+        seed=seed,
+        examples=examples,
+        paraphrase=paraphrase,
+        exclude=reserved,
+        diagnostics=corpus_counts,
+    )
+    calibration_cases = corpus(
+        targets,
+        n=n_calibration,
+        seed=seed + 1,
+        exclude={r["command"] for r in tests},
+        filter_unlearnable=False,
+    )
+    held_out = corpus(
+        targets,
+        n=n_eval,
+        seed=seed + 2,
+        held_out=True,
+        exclude=reserved | {c for c, _, _ in [*cases, *calibration_cases]},
+        filter_unlearnable=False,
+    )
     cfg = Config(dim=dim, n_layers=n_layers, n_heads=n_heads, ternary=True)
     model = Wren(cfg, rngs=nnx.Rngs(seed))
     losses = train(
@@ -155,11 +193,24 @@ def fit(
         weights, pack = pathlib.Path(tmp, "weights.npz"), pathlib.Path(tmp, "wren.bin")
         save(model, weights)
         export(str(weights), str(pack))
-        scores = evaluate(runtime.load_pack(pack), held_out, precision, tested)
+        scores = evaluate(
+            runtime.load_pack(pack),
+            held_out,
+            precision,
+            tested,
+            calibration=calibration_cases,
+            calibration_tests=calibrated,
+            policy=acceptance,
+        )
+        scores["corpus"] = corpus_counts
+        if tested:
+            scores["test_selection"] = selection(
+                tested, required_state=[t.get("state", {}) for t in tests]
+            )
         if math.isinf(scores["threshold"]):
             raise RuntimeError(
-                f"no threshold reaches precision {precision} on {n_eval} held-out "
-                f"samples and {len(tested)} tests (exact match "
+                f"no threshold reaches precision {precision} on {n_calibration} "
+                f"calibration samples and {len(calibrated)} installation records (exact match "
                 f"{scores['exact_match']:.1%}); not writing {out}"
             )
         meta = {
@@ -169,8 +220,13 @@ def fit(
             ],
             "threshold": scores["threshold"],
             "precision": precision,
+            "acceptance": acceptance,
             "steps": steps,
             "date": start.date().isoformat(),
+            "evaluation": {k: v for k, v in scores.items() if k != "threshold"},
+            "seed": seed,
+            "n_calibration": n_calibration,
+            "n_eval": n_eval,
         }
         if tested:
             meta["test_exact_match"] = scores["test_exact_match"]
@@ -184,11 +240,11 @@ def fit(
 
 
 #: Every knob `wren --train` exposes, and the one place its default lives:
-#: `fit`'s numeric keywords, read off its signature rather than listed again,
+#: `fit`'s scalar keywords, read off its signature rather than listed again,
 #: so editing it is the whole change -- the CLI turns each into a `--flag`,
 #: the flow into an input (wren/flow.py), and the run records what it was given.
-DEFAULTS: dict[str, int | float] = {
+DEFAULTS: dict[str, int | float | str] = {
     name: parameter.default
     for name, parameter in inspect.signature(fit).parameters.items()
-    if isinstance(parameter.default, int | float)
+    if isinstance(parameter.default, int | float | str)
 }

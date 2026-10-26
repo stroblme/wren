@@ -6,6 +6,6 @@ requires the `train` extra.
 """
 
 from wren.runtime import load_pack
-from wren.targets import Call, Target, act
+from wren.targets import Call, Target, accept, act
 
-__all__ = ["Call", "Target", "act", "load_pack"]
+__all__ = ["Call", "Target", "accept", "act", "load_pack"]

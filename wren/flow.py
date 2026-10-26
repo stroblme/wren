@@ -27,7 +27,7 @@ PLACEMENT = (
 
 #: One input per knob; the CLI spells the same names `--dim`, `--lr`, ...
 PORTS = [
-    Port(name, "float" if isinstance(default, float) else "int", initial=default)
+    Port(name, type(default).__name__, initial=default)
     for name, default in DEFAULTS.items()
 ]
 
@@ -41,6 +41,7 @@ PORTS = [
         Port("exact_match", "float"),
         Port("threshold", "float"),
         Port("coverage", "float"),
+        Port("evaluation", "json"),
         Port("pack", "artifact"),
     ],
     # No `gpus` declaration: this is the shipped training command, so a machine
@@ -62,7 +63,9 @@ def fit(
     lr: float,
     n_train: int,
     n_eval: int,
+    n_calibration: int,
     precision: float,
+    acceptance: str,
     seed: int,
 ) -> dict:
     """Train on an installation, the text of its JSON (`targets`, `examples`,
@@ -78,6 +81,7 @@ def fit(
         [Target(**t) for t in data["targets"]],
         out=path,
         examples=data.get("examples", ()),
+        calibration=data.get("calibration", ()),
         tests=data.get("tests", ()),
         dim=dim,
         n_layers=n_layers,
@@ -87,12 +91,15 @@ def fit(
         lr=lr,
         n_train=n_train,
         n_eval=n_eval,
+        n_calibration=n_calibration,
         precision=precision,
+        acceptance=acceptance,
         seed=seed,
         on_log=lambda step, loss: fluksio.emit(loss=loss),
     )
     keys = ("final_loss", "n_params", "exact_match", "threshold", "coverage")
     return {k: result[k] for k in keys} | {
+        "evaluation": {k: v for k, v in result.items() if k not in keys},
         "pack": fluksio.save_artifact(path.read_bytes(), name="wren.bin"),
     }
 
@@ -104,5 +111,12 @@ FLOW = Flow(
     # The installation travels as its text: the run records what it trained
     # on, and a worker on another machine reads it all the same.
     inputs=[Port("installation", "str"), *PORTS],
-    outputs=["final_loss", "n_params", "exact_match", "threshold", "coverage"],
+    outputs=[
+        "final_loss",
+        "n_params",
+        "exact_match",
+        "threshold",
+        "coverage",
+        "evaluation",
+    ],
 )

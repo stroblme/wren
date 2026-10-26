@@ -14,7 +14,7 @@ import pathlib
 import random
 import re
 import urllib.request
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 
 # Aliased: the benchmark loaders below name a sample's text `prompt`.
 from wren.targets import BUDGET as PROMPT_BUDGET
@@ -203,6 +203,15 @@ _SET = ["set {w} to {v}", "change {w} to {v}", "{w} to {v}"]
 # A string value may be a verb ("drain the pump") or not ("shutter down").
 _PICK = [*_SET, "switch {w} to {v}", "{w} {v}", "{v} {w}"]
 _READ = ["what is {w}", "what's {w}", "check {w}", "tell me {w}"]
+_PHRASINGS = {"on": _ON, "off": _OFF, "set": _SET, "pick": _PICK, "read": _READ}
+# Separate syntactic families measure transfer beyond the training templates.
+_HELD_OUT = {
+    "on": ["would you turn on {w}", "could you start {w}"],
+    "off": ["would you turn off {w}", "could you stop {w}"],
+    "set": ["could you set {w} to {v}", "please change {w} to {v}"],
+    "pick": ["could you switch {w} to {v}", "please set {w} to {v}"],
+    "read": ["can you tell me {w}", "please check {w}"],
+}
 # Words that take no "the" before them: "turn off all lights".
 _DETERMINERS = {"a", "all", "an", "each", "every", "the"}
 # Things a command may name that no target answers; those sharing a word
@@ -211,10 +220,9 @@ _THINGS = ["alarm", "basement", "car", "cellar", "computer", "dishwasher"]
 _THINGS += ["doorbell", "fridge", "garage", "hallway", "kettle", "microscope"]
 _THINGS += ["oven", "printer", "robot", "vacuum"]
 _CHATTER = [t.format(s) for t, slots in _IRRELEVANT.items() for s in slots]
-# A delay is said in the unit `answer` writes: 60 minutes is `1h`, so "in 60
-# minutes" is never said.
+# Include unit conversions as well as literal digit copying.
 _UNITS = [("second", 1), ("minute", 60), ("hour", 3600)]
-_COUNTS = {1: [k for k in range(1, 91) if k % 60], 3600: list(range(1, 25))}
+_COUNTS = {1: list(range(1, 91)), 3600: list(range(1, 25))}
 _COUNTS[60] = _COUNTS[1]
 # Half the delays draw from the counts people say most. Drawn evenly, a
 # single digit is one count in ten, and the model writes "5" as `55`.
@@ -225,7 +233,14 @@ _SAID_MOST = {
 # A count of one is as often "a minute" as "1 minute".
 _ONE = {"second": "a second", "minute": "a minute", "hour": "an hour"}
 # Sample kinds and their shares; the share of delayed commands.
-_MIX = {"single": 50, "group": 10, "joined": 10, "unknown": 10, "chatter": 10}
+_MIX = {
+    "single": 50,
+    "group": 10,
+    "joined": 10,
+    "unknown": 5,
+    "chatter": 5,
+    "negated": 10,
+}
 _MIX["example"] = 10
 _DELAY_SHARE = 0.2
 
@@ -237,15 +252,20 @@ def corpus(
     seed: int,
     examples: Sequence[dict] = (),
     paraphrase: Callable[[str], list[str]] | None = None,
+    held_out: bool = False,
+    exclude: Collection[str] = (),
+    filter_unlearnable: bool = True,
+    diagnostics: dict[str, int] | None = None,
 ) -> list[Case]:
     """Return `n` training samples for an installation's `targets`.
 
     Commands use generic phrasings with the words of a target's name and
     description: on and off for a bool, a number in range, one of a string's
     values, a question for a read-only target. Some name several targets or
-    carry a delay; about a fifth name nothing listed or are chit-chat and
-    expect no call. Each sample draws every target's value, so the model reads state
-    rather than memorising it. Samples whose calls `select` would not show,
+    carry a delay; about a fifth negate an action, name nothing listed or
+    are chit-chat and expect no call. Each sample draws every target's value,
+    so the model reads state rather than memorising it. Samples whose calls
+    `select` would not show,
     or whose answer exceeds `N_NEW`, are drawn again.
 
     `examples` are installation-supplied JSON objects for what generic
@@ -257,11 +277,32 @@ def corpus(
 
     `paraphrase(command)` returns rewordings of a command, which then stand in
     for it; it must keep numbers as digits. It is called once per distinct
-    command, before any delay is appended.
+    complete command, including generated delays and durations.
 
     Samples share `Target` objects of equal value, so treat them as read-only.
+    `held_out` uses separate phrasing families and chit-chat. `exclude`
+    reserves complete command texts for another split, including rewordings.
+    Evaluation can disable `filter_unlearnable` to retain selection and byte
+    limit failures. `diagnostics` receives attempted/accepted counts and
+    rejection reasons, counted even when those samples are retained.
     """
     rng = random.Random(seed)
+    excluded = set(exclude)
+    counts = diagnostics if diagnostics is not None else {}
+    counts.update(
+        dict.fromkeys(
+            (
+                "attempted",
+                "accepted",
+                "excluded",
+                "missing_target",
+                "missing_state",
+                "prompt_overflow",
+                "answer_overflow",
+            ),
+            0,
+        )
+    )
     known = [_example(targets, e) for e in examples]
     sayable = [t for t in targets if t.readonly or t.type != "str" or t.values]
     settable = [t for t in sayable if not t.readonly]
@@ -274,50 +315,91 @@ def corpus(
     shares = _MIX | {
         "group": _MIX["group"] if groups else 0,
         "example": _MIX["example"] if known else 0,
+        "joined": _MIX["joined"] if settable else 0,
+        "negated": _MIX["negated"] if settable else 0,
     }
     kinds, weights = list(shares), list(shares.values())
     pools = [_pool(t, rng) for t in targets]
     widened: dict[str, list[str]] = {}
     cases: list[Case] = []
     while len(cases) < n:
+        if counts["attempted"] >= max(100, n * 100):
+            raise ValueError(
+                f"cannot generate {n} samples within the constraints: {counts}"
+            )
+        counts["attempted"] += 1
         state = [rng.choice(pool) for pool in pools]
         kind = rng.choices(kinds, weights)[0]
+        required_state: Collection[str] = ()
         if kind == "single":
-            command, calls = _clause([rng.choice(sayable)], rng)
+            command, calls = _clause([rng.choice(sayable)], rng, held_out)
         elif kind == "group":
             group = rng.choice(groups)
             k = min(len(group), rng.choice((2, 3)))
-            command, calls = _clause(rng.sample(group, k), rng)
+            command, calls = _clause(rng.sample(group, k), rng, held_out)
         elif kind == "joined":
             k = min(len(settable), rng.choice((2, 3)))
-            parts = [_clause([t], rng) for t in rng.sample(settable, k)]
+            parts = [_clause([t], rng, held_out) for t in rng.sample(settable, k)]
             command = " and ".join(c for c, _ in parts)
             calls = [call for _, cs in parts for call in cs]
         elif kind == "unknown":
-            command, calls = _unlisted(sayable, things, rng), []
+            command, calls = _unlisted(sayable, things, rng, held_out), []
         elif kind == "chatter":
-            command, calls = rng.choice(_CHATTER), []
+            command, calls = rng.choice(_CHATTER[int(held_out) :: 2]), []
+        elif kind == "negated":
+            t = rng.choice(settable)
+            w = _noun(rng.choice(_phrases(t)), rng)
+            v = _draw(t, rng)
+            action = (
+                f"turn {w} {'on' if v else 'off'}"
+                if isinstance(v, bool)
+                else f"set {w} to {_said(v)}"
+            )
+            prefix = rng.choice(
+                ["don't", "do not"]
+                if not held_out
+                else ["please don't", "please do not"]
+            )
+            command, calls = f"{prefix} {action}", []
         else:
             command, fixed, calls = rng.choice(known)
             state = [fixed.get(t.name, t) for t in state]
+            required_state = fixed
+        delayable = kind in ("single", "group") and calls[0].value is not None
+        if delayable and rng.random() < _DELAY_SHARE:
+            unit, size = rng.choice(_UNITS)
+            k = (
+                1
+                if rng.random() < 0.25
+                else rng.choice(
+                    _COUNTS[size] if rng.random() < 0.5 else _SAID_MOST[size]
+                )
+            )
+            said = f"{k} {unit}s" if k > 1 else rng.choice([f"1 {unit}", _ONE[unit]])
+            seconds = k * size
+            if rng.random() < 0.1:
+                said, seconds = "half an hour", 1800
+            if isinstance(calls[0].value, bool) and rng.random() < 0.5:
+                # A duration: the value now, the opposite once it is over.
+                command += f" for {said}"
+                calls += [Call(c.target, not c.value, seconds) for c in calls]
+            else:
+                command += f" in {said}"
+                calls = [Call(c.target, c.value, seconds) for c in calls]
         if paraphrase is not None:
             if command not in widened:
                 widened[command] = paraphrase(command)
             command = rng.choice([command, *widened[command]])
-        delayable = kind in ("single", "group") and calls[0].value is not None
-        if delayable and rng.random() < _DELAY_SHARE:
-            unit, size = rng.choice(_UNITS)
-            k = rng.choice(_COUNTS[size] if rng.random() < 0.5 else _SAID_MOST[size])
-            said = f"{k} {unit}s" if k > 1 else rng.choice([f"1 {unit}", _ONE[unit]])
-            if isinstance(calls[0].value, bool) and rng.random() < 0.5:
-                # A duration: the value now, the opposite once it is over.
-                command += f" for {said}"
-                calls += [Call(c.target, not c.value, k * size) for c in calls]
-            else:
-                command += f" in {said}"
-                calls = [Call(c.target, c.value, k * size) for c in calls]
-        if _learnable((command, state, calls)):
-            cases.append((command, state, calls))
+        if command in excluded:
+            counts["excluded"] += 1
+            continue
+        case = command, state, calls
+        if reason := _rejection(case, required_state):
+            counts[reason] += 1
+            if filter_unlearnable:
+                continue
+        cases.append(case)
+        counts["accepted"] += 1
     return cases
 
 
@@ -333,8 +415,9 @@ def text(cases: list[Case]) -> str:
 def as_case(targets: list[Target], record: dict) -> Case:
     """Read an example-shaped record (`corpus`'s `examples`) as a sample:
     its command, every target with the record's state or its listed value,
-    and its calls. Raise ValueError if the model could not answer it."""
-    command, fixed, calls = _example(targets, record)
+    and its calls. Validate labels, retaining selection and length failures
+    so evaluation can measure them."""
+    command, fixed, calls = _example(targets, record, learnable=False)
     return command, [fixed.get(t.name, t) for t in targets], calls
 
 
@@ -357,7 +440,7 @@ def from_log(records: Sequence[dict]) -> list[dict]:
 
 
 def _example(
-    targets: list[Target], e: dict
+    targets: list[Target], e: dict, *, learnable: bool = True
 ) -> tuple[str, dict[str, Target], list[Call]]:
     """Read an example as (command, {name: target with its state value},
     calls); raise ValueError if the model could not learn it from the targets
@@ -373,23 +456,27 @@ def _example(
     out = list(answer(calls).encode())
     if not (
         len(fixed) == len(state)
-        and _learnable((command, listed, calls))
+        and (not learnable or _rejection((command, listed, calls), state) is None)
         and parse(out, [1.0] * len(out), listed) == calls
     ):
         raise ValueError(f"example cannot be learnt: {command!r}")
     return command, fixed, calls
 
 
-def _learnable(case: Case) -> bool:
-    """Whether the prompt fits and shows every called target, and the answer fits."""
+def _rejection(case: Case, required_state: Collection[str] = ()) -> str | None:
+    """The first input/selection/output limit preventing a complete answer."""
     command, targets, calls = case
     shown = select(targets, command)
     names = {t.name for t in shown}
-    return (
-        len(render_prompt(shown, command).encode()) <= PROMPT_BUDGET
-        and all(c.target in names for c in calls)
-        and len(answer(calls).encode()) <= N_NEW
-    )
+    if len(render_prompt(shown, command).encode()) > PROMPT_BUDGET:
+        return "prompt_overflow"
+    if any(c.target not in names for c in calls):
+        return "missing_target"
+    if not set(required_state) <= names:
+        return "missing_state"
+    if len(answer(calls).encode()) > N_NEW:
+        return "answer_overflow"
+    return None
 
 
 def _pool(t: Target, rng: random.Random) -> list[Target]:
@@ -418,28 +505,34 @@ def _draw(t: Target, rng: random.Random) -> Value:
     return float(min(max(round(rng.uniform(lo, hi), rng.randint(0, 1)), lo), hi))
 
 
-def _clause(targets: list[Target], rng: random.Random) -> tuple[str, list[Call]]:
+def _clause(
+    targets: list[Target], rng: random.Random, held_out: bool = False
+) -> tuple[str, list[Call]]:
     """Say one value for `targets` of one kind: "turn on the kitchen light and
     the bedroom light"."""
     w = " and ".join(_noun(rng.choice(_phrases(t)), rng) for t in targets)
+    forms = _HELD_OUT if held_out else _PHRASINGS
     if targets[0].readonly:
-        return rng.choice(_READ).format(w=w), [Call(t.name) for t in targets]
+        return rng.choice(forms["read"]).format(w=w), [Call(t.name) for t in targets]
     value = _draw(targets[0], rng)
     if isinstance(value, bool):
-        template = rng.choice(_ON if value else _OFF)
+        template = rng.choice(forms["on" if value else "off"])
     else:
-        template = rng.choice(_PICK if isinstance(value, str) else _SET)
+        template = rng.choice(forms["pick" if isinstance(value, str) else "set"])
     return template.format(w=w, v=_said(value)), [Call(t.name, value) for t in targets]
 
 
-def _unlisted(targets: list[Target], things: list[str], rng: random.Random) -> str:
+def _unlisted(
+    targets: list[Target], things: list[str], rng: random.Random, held_out: bool = False
+) -> str:
     """A command on a thing not listed, half the time in place of a listed
     target's last word or the words before it: "turn on the hallway light"."""
     thing = rng.choice(things)
     if rng.random() < 0.5:
         *head, last = rng.choice(targets).name.split("_")
         thing = rng.choice([f"{thing} {last}", " ".join([*head, thing])])
-    template = rng.choice([*_ON, *_OFF, *_SET, *_READ])
+    forms = _HELD_OUT if held_out else _PHRASINGS
+    template = rng.choice([t for k in ("on", "off", "set", "read") for t in forms[k]])
     return template.format(w=_noun(thing, rng), v=rng.randint(1, 100))
 
 

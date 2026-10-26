@@ -86,9 +86,10 @@ def select(targets: list[Target], command: str, budget: int = BUDGET) -> list[Ta
     ranked = sorted((i for i, s in enumerate(scores) if s), key=lambda i: -scores[i])
     used, keep = len(prompt([], command).encode()), set()
     for i in ranked:
-        used += len(_line(targets[i]).encode())
-        if used > budget:
-            break
+        size = len(_line(targets[i]).encode())
+        if used + size > budget:
+            continue
+        used += size
         keep.add(i)
     return [t for i, t in enumerate(targets) if i in keep]
 
@@ -152,9 +153,27 @@ def act(
     `model` is a pack from `runtime.load_pack`; default to the shipped pack.
     """
     pack = model or _packaged()
-    shown = select(targets, command, pack["cfg"]["context"] - N_NEW)
+    budget = pack["cfg"]["context"] - N_NEW
+    if len(prompt([], command).encode()) > budget:
+        return []
+    shown = select(targets, command, budget)
     out, probs = runtime.generate(pack, tokenizer.encode(prompt(shown, command)), N_NEW)
     return parse(out, probs, targets)
+
+
+def accept(calls: list[Call], *, model: dict | None = None) -> list[Call]:
+    """Apply a pack's threshold and acceptance policy to proposed calls.
+
+    New packs accept the whole answer only if every call passes. Older packs
+    without `acceptance` retain per-call filtering. This cannot detect calls
+    the model omitted; no call is executed here.
+    """
+    meta = (model or _packaged())["meta"]
+    policy = meta.get("acceptance", "call")
+    if policy not in ("answer", "call"):
+        raise ValueError(f"unknown acceptance policy: {policy}")
+    kept = [c for c in calls if c.confidence >= meta["threshold"]]
+    return [] if policy == "answer" and len(kept) != len(calls) else kept
 
 
 @functools.cache

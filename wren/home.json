@@ -71,7 +71,23 @@
     {"command": "warm the living room to 22 degrees", "calls": [["living_room_heating", 22]]},
     {"command": "close the bedroom shutter", "calls": [["bedroom_shutter", "DOWN"]]},
     {"command": "open the kitchen shutter", "calls": [["kitchen_shutter", "UP"]]},
-    {"command": "coffee please", "calls": [["coffee_machine", true]]}
+    {"command": "coffee please", "calls": [["coffee_machine", true]]},
+    {"command": "don't switch on the bedroom light", "calls": []},
+    {"command": "do not switch off the office light", "calls": []},
+    {"command": "leave the kitchen light unchanged", "calls": []},
+    {"command": "kill the garden light", "calls": [["garden_light", false]]},
+    {"command": "close the bedroom blinds", "calls": [["bedroom_shutter", "DOWN"]]},
+    {"command": "raise the kitchen shutter", "calls": [["kitchen_shutter", "UP"]]}
+  ],
+  "calibration": [
+    {"command": "turn the kitchen light on", "calls": [["kitchen_light", true]]},
+    {"command": "don't turn on the bedroom light", "calls": []},
+    {"command": "do not turn off the garden light", "calls": []},
+    {"command": "switch off the garden light in a minute", "calls": [["garden_light", false, 60]]},
+    {"command": "switch on the office light in half an hour", "calls": [["office_light", true, 1800]]},
+    {"command": "close the awning in an hour", "calls": [["canopy", "DOWN", 3600]]},
+    {"command": "run the sprinkler for 10 minutes", "calls": [["garden_watering", true], ["garden_watering", false, 600]]},
+    {"command": "kill the bedroom light", "calls": [["bedroom_light", false]]}
   ],
   "tests": [
     {"command": "water the garden for 20 minutes", "calls": [["garden_watering", true], ["garden_watering", false, 1200]]},
@@ -91,6 +107,14 @@
     {"command": "pause the tv", "calls": [["living_room_media", "PAUSE"]]},
     {"command": "turn the volume up to 50", "calls": [["living_room_volume", 50]]},
     {"command": "make me a coffee", "calls": [["coffee_machine", true]]},
-    {"command": "good night", "calls": []}
+    {"command": "good night", "calls": []},
+    {"command": "don't turn on the kitchen light", "calls": []},
+    {"command": "do not turn off the kitchen light", "calls": []},
+    {"command": "turn off the kitchen light in a minute", "calls": [["kitchen_light", false, 60]]},
+    {"command": "turn off the kitchen light in an hour", "calls": [["kitchen_light", false, 3600]]},
+    {"command": "turn off the kitchen light in half an hour", "calls": [["kitchen_light", false, 1800]]},
+    {"command": "turn off the kitchen light in 1 minute", "calls": [["kitchen_light", false, 60]]},
+    {"command": "turn off the kitchen light in 5 minutes", "calls": [["kitchen_light", false, 300]]},
+    {"command": "turn off the kitchen light in 60 minutes", "calls": [["kitchen_light", false, 3600]]}
   ]
 }

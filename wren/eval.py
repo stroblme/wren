@@ -4,13 +4,13 @@ Exact match requires identical function names, call order, and argument
 values. Well-formedness, name accuracy, and argument F1 measure partial
 success. For calls on targets, `threshold` recommends the confidence a
 host applies calls from and `coverage` gives the share it then gets right;
-`evaluate` runs a pack on generated samples and an installation's test
-commands and reports both.
+`evaluate` chooses a threshold on separate calibration samples and reports
+complete-command results on independent evaluation and installation tests.
 """
 
 import ast
 import math
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 import numpy as np
 
@@ -132,21 +132,29 @@ def threshold(
     expected: list[list[targets.Call]],
     precision: float = 0.99,
     also: Sequence[tuple[list[list[targets.Call]], list[list[targets.Call]]]] = (),
+    *,
+    policy: str = "call",
 ) -> float:
-    """Return the lowest confidence at which applied calls reach `precision`.
+    """Return the most permissive observed acceptance set reaching `precision`.
 
-    A host applies each call whose confidence is at least the threshold. A
-    call is right if its sample expects it (same target, value and delay, in
+    With `policy="call"`, apply each call at or above the threshold. A call
+    is right if its sample expects it (same target, value and delay, in
     any order), so any call on a sample that should abstain is wrong. Each
     (predicted, expected) set in `also` has to reach `precision` at the same
     threshold, checked on its own, where a set with no call left applies
     nothing wrong. Precision need not rise with the threshold, so the higher
-    of two thresholds found apart can miss it on the other set. Return
-    infinity, which applies nothing, when no threshold reaches `precision`.
+    of two thresholds found apart can miss it on the other set.
+    With `policy="answer"`, score each nonempty answer once, at its minimum
+    call confidence; it is right only when every expected call is present
+    and no extra call is generated.
+    Place the cutoff between adjacent observed scores so tiny numerical
+    changes do not reject a call sitting exactly on it. Return infinity,
+    which applies nothing, when no threshold reaches `precision`.
     """
-    conf, right = _marks(predicted, expected)
-    others = [_marks(p, e) for p, e in also]
-    for t in np.unique(np.concatenate([conf, *(c for c, _ in others)])):  # ascending
+    conf, right = _marks(predicted, expected, policy)
+    others = [_marks(p, e, policy) for p, e in also]
+    candidates = np.unique(np.concatenate([conf, *(c for c, _ in others)]))
+    for i, t in enumerate(candidates):  # ascending
         applied = conf >= t
         if (
             applied.any()
@@ -156,19 +164,29 @@ def threshold(
                 for c, r in others
             )
         ):
-            return float(t)
+            lower = candidates[i - 1] if i else t
+            return float(lower + (t - lower) / 2)
     return math.inf
 
 
 def _marks(
-    predicted: list[list[targets.Call]], expected: list[list[targets.Call]]
+    predicted: list[list[targets.Call]],
+    expected: list[list[targets.Call]],
+    policy: str = "call",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Each predicted call's confidence, and whether its sample expects it."""
     conf, right = [], []
+    if policy not in ("call", "answer"):
+        raise ValueError(f"unknown acceptance policy: {policy}")
     for pred, exp in zip(predicted, expected, strict=True):
         want = {_key(c) for c in exp}
-        conf += [c.confidence for c in pred]
-        right += [_key(c) in want for c in pred]
+        if policy == "answer":
+            if pred:
+                conf.append(min(c.confidence for c in pred))
+                right.append({_key(c) for c in pred} == want)
+        else:
+            conf += [c.confidence for c in pred]
+            right += [_key(c) in want for c in pred]
     return np.array(conf, dtype=float), np.array(right, dtype=bool)
 
 
@@ -194,29 +212,162 @@ def evaluate(
     cases: list[tuple[str, list[targets.Target], list[targets.Call]]],
     precision: float = 0.99,
     tests: Sequence[tuple[str, list[targets.Target], list[targets.Call]]] = (),
-) -> dict[str, float]:
+    *,
+    calibration: Sequence[tuple[str, list[targets.Target], list[targets.Call]]],
+    calibration_tests: Sequence[
+        tuple[str, list[targets.Target], list[targets.Call]]
+    ] = (),
+    policy: str = "call",
+) -> dict:
     """Run `act` with `pack` on (command, targets, expected calls) samples.
 
-    `cases` are generated samples, `tests` an installation's own commands.
-    The threshold is the lowest at which applied calls reach `precision` on
-    each set on its own: pooled into a thousand generated samples, a few
-    tests' wrong calls would fit in the allowance.
-    Return the exact match (every call right, no other, at any confidence),
-    the threshold and the coverage there, and with tests their exact match
-    and coverage as `test_exact_match` and `test_coverage`.
+    Only `calibration` and optional installation `calibration_tests` choose
+    the threshold, checked separately. `cases` and installation `tests`
+    report performance at that frozen threshold; they cannot adjust it.
+    Metrics include positive-command completion, incorrect and partial
+    accepted answers, and counts per command kind. Empty denominators are
+    None, not evidence of perfect precision.
     """
     predicted, expected = _run(pack, cases)
     tested, wanted = _run(pack, tests)
-    t = threshold(predicted, expected, precision, also=[(tested, wanted)])
-    scores = {
-        "exact_match": coverage(predicted, expected, 0.0),
+    calibrated, reference = _run(pack, calibration)
+    extra, extra_reference = _run(pack, calibration_tests)
+    t = threshold(
+        calibrated, reference, precision, also=[(extra, extra_reference)], policy=policy
+    )
+    scores = metrics(predicted, expected, t, policy=policy) | {
         "threshold": t,
-        "coverage": coverage(predicted, expected, t),
+        "calibration": metrics(calibrated, reference, t, policy=policy),
+        "selection": selection(cases, budget=pack["cfg"]["context"] - targets.N_NEW),
     }
+    if calibration_tests:
+        scores["calibration_tests"] = metrics(extra, extra_reference, t, policy=policy)
     if tests:
-        scores["test_exact_match"] = coverage(tested, wanted, 0.0)
-        scores["test_coverage"] = coverage(tested, wanted, t)
+        scores["tests"] = metrics(tested, wanted, t, policy=policy)
+        scores["test_exact_match"] = scores["tests"]["exact_match"]
+        scores["test_coverage"] = scores["tests"]["coverage"]
     return scores
+
+
+def metrics(
+    predicted: list[list[targets.Call]],
+    expected: list[list[targets.Call]],
+    threshold: float,
+    *,
+    policy: str = "call",
+) -> dict:
+    """Score applied calls and complete commands, including abstentions.
+
+    `partial_commands` accept a proper nonempty subset of the expected
+    calls. `wrong_commands` accept any unexpected call. Command precision
+    counts only complete correct answers among nonempty accepted answers.
+    Duplicate calls retain the existing idempotent set semantics.
+    """
+    rows = []
+    gate = {"meta": {"threshold": threshold, "acceptance": policy}}
+    for pred, exp in zip(predicted, expected, strict=True):
+        want = {_key(c) for c in exp}
+        raw = {_key(c) for c in pred}
+        kept = targets.accept(pred, model=gate)
+        got = {_key(c) for c in kept}
+        delayed = [c.delay_s is not None for c in exp]
+        if not exp:
+            kind = "abstain"
+        elif any(delayed):
+            kind = "delay" if all(delayed) else "duration"
+        elif len(exp) > 1:
+            kind = "multi"
+        else:
+            kind = "read" if exp[0].value is None else "set"
+        rows.append((kind, want, raw, got, kept))
+
+    def summary(subset):
+        n = len(subset)
+        positive = sum(bool(w) for _, w, _, _, _ in subset)
+        accepted = sum(bool(g) for _, _, _, g, _ in subset)
+        n_calls = sum(len(kept) for _, _, _, _, kept in subset)
+        correct = sum(bool(g) and g == w for _, w, _, g, _ in subset)
+        return {
+            "n": n,
+            "exact_match": sum(r == w for _, w, r, _, _ in subset) / n if n else None,
+            "coverage": sum(g == w for _, w, _, g, _ in subset) / n if n else None,
+            "positive_coverage": correct / positive if positive else None,
+            "accepted_commands": accepted,
+            "accepted_calls": n_calls,
+            "command_precision": correct / accepted if accepted else None,
+            "call_precision": sum(
+                _key(c) in w for _, w, _, _, kept in subset for c in kept
+            )
+            / n_calls
+            if n_calls
+            else None,
+            "partial_commands": sum(bool(g) and g < w for _, w, _, g, _ in subset),
+            "wrong_commands": sum(bool(g - w) for _, w, _, g, _ in subset),
+            "missed_commands": sum(bool(w) and not g for _, w, _, g, _ in subset),
+        }
+
+    return summary(rows) | {
+        "by_kind": {
+            kind: summary([r for r in rows if r[0] == kind])
+            for kind in sorted({r[0] for r in rows})
+        }
+    }
+
+
+def selection(
+    cases: Sequence[tuple[str, list[targets.Target], list[targets.Call]]],
+    *,
+    required_state: Sequence[Collection[str]] | None = None,
+    budget: int = targets.BUDGET,
+) -> dict:
+    """Measure selection before filtering cases, with optional state dependencies.
+
+    `required_state[i]` names the state targets the ith label depends on,
+    such as the keys of an installation record's `state` object.
+    """
+    wanted = shown_calls = dependencies = shown_state = 0
+    prompt_overflow = answer_overflow = 0
+    failures = []
+    required = required_state if required_state is not None else [()] * len(cases)
+    for (command, state, calls), needs in zip(cases, required, strict=True):
+        shown = targets.select(state, command, budget)
+        names = {t.name for t in shown}
+        want, need = {c.target for c in calls}, set(needs)
+        wanted += len(want)
+        shown_calls += len(want & names)
+        dependencies += len(need)
+        shown_state += len(need & names)
+        prompt_bytes = len(targets.prompt(shown, command).encode())
+        answer_bytes = len(targets.answer(calls).encode())
+        prompt_overflow += prompt_bytes > budget
+        answer_overflow += answer_bytes > targets.N_NEW
+        if (
+            want - names
+            or need - names
+            or prompt_bytes > budget
+            or answer_bytes > targets.N_NEW
+        ):
+            failures.append(
+                {
+                    "command": command,
+                    "missing_targets": sorted(want - names),
+                    "missing_state": sorted(need - names),
+                    "prompt_bytes": prompt_bytes,
+                    "answer_bytes": answer_bytes,
+                }
+            )
+    return {
+        "n": len(cases),
+        "required_targets": wanted,
+        "shown_targets": shown_calls,
+        "target_recall": shown_calls / wanted if wanted else None,
+        "required_state": dependencies,
+        "shown_state": shown_state,
+        "state_recall": shown_state / dependencies if dependencies else None,
+        "prompt_overflow": prompt_overflow,
+        "answer_overflow": answer_overflow,
+        "failures": failures,
+    }
 
 
 def _run(
