@@ -16,9 +16,11 @@ C runtimes load the same pack.
 
 ## Demo installation
 
-The shipped demo home (`wren/home.json`: 20 targets, 50 examples, 18 tests)
-was trained by `fit` at its defaults: 256 wide, 4 layers, 4000 steps with
-batches of 16.
+The shipped model was trained on an earlier demo home with 20 targets,
+50 examples and 18 tests, using `fit`'s shape and step defaults: 256 wide,
+4 layers, 4000 steps with batches of 16. The current `wren/home.json`
+contains 56 examples, 8 calibration records and 26 tests; its retrained
+candidate was not promoted, as described below.
 
 | Measurement | Value |
 |---|---|
@@ -33,13 +35,19 @@ batches of 16.
 | 1000 generated samples | 92.7% | 69.8% |
 | 18 installation tests | 8 of 18 | 5 of 18 |
 
-Generated evaluation samples use another seed and the same templates and
-examples as training; command wording can overlap. Exact match compares
+These historical generated evaluation samples used another seed and the
+same templates and examples as training; command wording could overlap.
+The current evaluator separates calibration and holds out phrasing families.
+Exact match compares
 target, value and delay, ignoring call order and confidence. Coverage
 counts samples handled exactly right after applying only calls at or above
 the threshold, including correct abstentions. Two of the five covered tests
 are abstentions. These measurements describe this pack, not expected
 accuracy for a new installation.
+
+A fresh CPU audit measured 4/18 covered tests: "stop the sprinkler" scored
+about 1.2e-7 below the saved threshold. The historical 5/18 result is
+sensitive to this small numerical difference.
 
 The threshold sits just above the most confident wrong answer to a test:
 "kill all the lights" switches them all on, at 0.96. On generated commands
@@ -57,6 +65,43 @@ one that ends it.
 
 The [s12 study](https://github.com/stroblme/wren/tree/main/dev/s12_cpu_fit)
 compares the shapes and step budgets behind the training defaults.
+
+## Accuracy improvements, 2026-10-25
+
+[s13](https://github.com/stroblme/wren/tree/dev/dev/s13_accuracy) adds
+independent calibration, complete-command metrics, negation/timing data,
+whole-answer acceptance and selection audits. New packs default to accepting
+every generated call together or rejecting the answer. The shipped pack's
+policy is unchanged.
+
+A CPU retrain used the existing 256×4, 4000-step stream recipe with the
+expanded data. Both packs were evaluated on the same 1000 unfiltered
+held-out samples and 26 installation tests, with whole-answer thresholds
+chosen on separate calibration data.
+
+| Measurement | Shipped weights, recalibrated | Retrained candidate |
+|---|---|---|
+| Held-out raw exact match | 68.5% | 74.9% |
+| Positive-command coverage | 1/746 (0.13%) | 52/746 (7.0%) |
+| Installation raw exact match | 10/26 | 16/26 |
+| Nonempty accepted installation answers | 0 | 1, incorrect |
+
+The candidate correctly rejected both tested negations and returned the
+right delays for all six added timing tests. However, it accepted "kill all
+the lights" as **on**, and accepted no correct positive installation test.
+It therefore did not replace the shipped pack. Calibration precision alone
+did not establish reliability on independent commands.
+
+The selection audit retained 18/1000 generated failures: nine missing
+required targets and nine answers exceeding the byte limit. Installation
+tests had full target and declared-state recall.
+
+The training-objective pilot compared stream windows, intact examples and
+intact examples with prompt loss weight 0.1 across three initialization
+seeds. At 64×2 and 500 steps, mean held-out exact match was 12.5%, 21.8%
+and 25.8%, respectively. These early gains justify a full-size comparison;
+they do not justify changing the production training recipe. The study
+README records settings, run IDs, limitations and reproduction commands.
 
 ## Historical mobile-actions benchmark
 
@@ -103,6 +148,7 @@ question, findings and reproduction commands.
 | [s8](https://github.com/stroblme/wren/tree/main/dev/s8_state_quant), [s8b](https://github.com/stroblme/wren/tree/main/dev/s8b_copy_spectrum) | state-in-context data, ternary QAT, the copy circuit |
 | [s10](https://github.com/stroblme/wren/tree/main/dev/s10_fluksio_tail) | switches, two areas, area-less and unknown commands, recogniser noise |
 | [s12](https://github.com/stroblme/wren/tree/main/dev/s12_cpu_fit) | steps and shape for training an installation on a CPU |
+| [s13](https://github.com/stroblme/wren/tree/dev/dev/s13_accuracy) | independent accuracy, whole-answer acceptance and training objectives |
 
 ## Reproduce studies
 

@@ -42,7 +42,7 @@ Train and load a pack with Python, or use the
 import json
 from pathlib import Path
 
-from wren import Target, act, load_pack
+from wren import Target, accept, act, load_pack
 from wren.train import fit
 
 home = json.loads(Path("home.json").read_text())
@@ -51,12 +51,13 @@ fit(
     targets,
     out="home.bin",
     examples=home.get("examples", []),
+    calibration=home.get("calibration", []),
     tests=home.get("tests", []),
 )
 
 model = load_pack("home.bin")
 calls = act("close the awning in 10 minutes", targets, model=model)
-applied = [c for c in calls if c.confidence >= model["meta"]["threshold"]]
+applied = accept(calls, model=model)
 ```
 
 `act` returns calls without executing or filtering them. Apply your

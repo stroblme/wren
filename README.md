@@ -87,22 +87,29 @@ Alternatively, train directly with Python `fit`, then load the pack for inferenc
 import json
 from pathlib import Path
 
-from wren import Target, act, load_pack
+from wren import Target, accept, act, load_pack
 from wren.train import fit
 
 home = json.loads(Path("home.json").read_text())
 targets = [Target(**t) for t in home["targets"]]
-fit(targets, out="home.bin", examples=home["examples"], tests=home["tests"])
+fit(
+    targets,
+    out="home.bin",
+    examples=home["examples"],
+    calibration=home.get("calibration", []),
+    tests=home["tests"],
+)
 
 model = load_pack("home.bin")
 calls = act("close the awning in 10 minutes", targets, model=model)
-applied = [c for c in calls if c.confidence >= model["meta"]["threshold"]]
+applied = accept(calls, model=model)
 print(applied)
 ```
 
 `act` returns calls without executing or filtering them.
-Your code applies the threshold, schedules delays and decides how to handle partial answers.
-The threshold comes from generated evaluation samples and the installation's tests.
+`accept` applies the pack's threshold and policy; your code executes calls and schedules delays.
+New packs accept all generated calls together or reject the answer.
+The threshold comes from separate calibration samples and optional installation `calibration` records. Tests measure the frozen policy.
 Note that unfamiliar wording can still produce confident errors. 
 The [How-to](https://stroblme.github.io/wren/guide/) covers targets, examples, tests, the threshold, group targets, learning from the caller's log and the demo model's limits.
 

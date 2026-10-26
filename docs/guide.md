@@ -36,7 +36,7 @@ It adds JAX, Flax and Optax. A GPU and Fluksio are not required for
 ## Describe the targets
 
 Save your installation as `home.json`. It contains targets and optional
-examples and tests:
+examples, calibration commands and tests:
 
 ```json
 {
@@ -82,7 +82,7 @@ Wren generates its training commands from the target names and descriptions:
 "turn on the kitchen light", "set bedroom heating to 21", "what is the
 outdoor temperature", several targets at once, delays ("in 10 minutes"),
 durations ("for 10 minutes": on now, off later), and commands it must not
-answer, on things that are not listed and plain chit-chat. It knows nothing
+answer: negated actions, things that are not listed and plain chit-chat. It knows nothing
 about your domain. Examples add what it cannot guess:
 
 ```json
@@ -108,9 +108,21 @@ does not add them to training; keep their wording distinct from examples.
 Include a basic positive command as a sanity check, then add phrasings
 outside the generator's templates: "lower the awning in half an hour",
 "kitchen lights on", "it's freezing in the bedroom" (no call: a larger
-model can decide what that means). Tests help set the threshold below.
+model can decide what that means). Tests evaluate a frozen threshold and
+never choose it. Training excludes their exact command texts, including
+paraphrases returned by your callback.
 When a test reveals a missing meaning, add another wording to the examples
 and keep the test as the check.
+
+## Add calibration commands
+
+An optional `"calibration"` list uses the same record format. Give it
+representative commands, including negations, delays and durations, with
+wording distinct from both examples and tests. `fit` uses these records and
+a separate generated calibration set to choose the threshold. It checks the
+two sets separately so the larger generated set cannot hide errors in the
+installation's commands. Examples, calibration and tests must not share
+exact command texts.
 
 ## Train
 
@@ -140,6 +152,7 @@ result = fit(
     [Target(**t) for t in home["targets"]],
     out="home.bin",
     examples=home.get("examples", []),
+    calibration=home.get("calibration", []),
     tests=home.get("tests", []),
 )
 print(result)
@@ -152,13 +165,15 @@ quantization and Muon with a cosine learning-rate decay, and packs the
 model into about 535 kB. The 20-target demo took roughly 40–60 minutes on a
 20-core CPU; time depends on the installation and hardware. The
 [Reference](reference.md#fit) lists the options and return values.
-`fit` then runs the model on 1000 generated samples drawn with another seed
-and on your tests.
+`fit` calibrates on 1000 generated samples and your calibration records,
+then evaluates on another 1000 generated samples and your tests.
 
 See the [result reference](reference.md#results) for exact match, coverage,
-loss and timing. Generated evaluation samples use the same templates and
-supplied examples as training; command wording can overlap. Your own tests
-check phrasings outside that distribution.
+loss and timing. Generated evaluation uses separate phrasing families,
+without training examples or command texts seen in training or calibration.
+Selection and byte-limit failures remain in evaluation. Check positive-command
+coverage and partial/wrong accepted commands as well as aggregate coverage,
+which includes correct abstentions.
 
 The pack stores the target definitions without current values, the
 threshold, requested precision, steps, date and test exact match when tests
@@ -176,13 +191,13 @@ pack only after calibration succeeds; calibration failure raises
 import json
 from pathlib import Path
 
-from wren import Target, act, load_pack
+from wren import Target, accept, act, load_pack
 
 home = json.loads(Path("home.json").read_text())
 targets = [Target(**t) for t in home["targets"]]  # with current values
 model = load_pack("home.bin")
 calls = act("close the awning in 10 minutes", targets, model=model)
-accepted = [c for c in calls if c.confidence >= model["meta"]["threshold"]]
+accepted = accept(calls, model=model)
 print(accepted)
 ```
 
@@ -205,33 +220,36 @@ marks, with numbers as digits. Wren does not normalize text before inference.
 filtering to you. A call's confidence is the lowest probability the model
 gave any byte of its line, including its newline and the closing blank
 line. This score is not a probability that the requested action is correct.
-Apply the calls at or above the pack's threshold
-(`model["meta"]["threshold"]`). When none pass, hand the command to something
-else, typically a larger language model.
+Use `accept(calls, model=model)` to apply the saved threshold and policy.
+New packs use whole-answer acceptance: every generated call must pass, or
+none are accepted. When none pass, hand the command to something else,
+typically a larger language model.
 Use the saved full-precision threshold; CLI confidences are rounded.
 
-If only some calls pass, decide how to handle the partial result before
-executing it. A duration can lose its delayed stop call. Sending the whole
-command to a fallback after applying some calls can duplicate actions.
-Wren leaves that policy to your application.
+Whole-answer acceptance prevents filtering from dropping a duration's stop
+while retaining its start. It cannot detect a stop the model never generated.
+Older packs without `acceptance` retain per-call filtering; handle partial
+results before executing them or sending the command to a fallback.
 
-`fit` saves the lowest confidence at which the applied calls meet
-`precision` (default 0.99) on the generated evaluation calls and on the test
-calls, each set checked on its own. Correctness requires the same target,
-value and delay. Checking the sets apart keeps a small test set from being
-outweighed by the generated samples. Tests on which the model makes no call
-apply nothing wrong. If no confidence meets `precision` on both, `fit` raises
-and writes no model.
+With the default `acceptance="answer"`, `fit` calibrates `precision`
+(default 0.99) on complete nonempty answers. A missing call makes an accepted
+answer incorrect, as does an extra call or a wrong target, value or delay.
+`acceptance="call"` retains the previous per-call criterion. Calibration
+selects the most permissive observed acceptance set meeting the requested
+precision on each calibration set, placing the threshold between adjacent
+scores when possible. If none qualifies, `fit` raises and writes no model.
+Independent test results are reported without changing that threshold;
+review them before replacing an installation's model.
 
-The threshold reflects only the generated phrasings and your tests. A phrasing
-unlike both can still be answered confidently and wrongly. Widen what the
+The threshold reflects only the calibration data. Unfamiliar phrasing can
+still be answered confidently and wrongly. Widen what the
 model knows with more examples and tests, with a paraphraser (`fit` takes a
 `paraphrase(command) -> list[str]` function, for example one that asks a
 language model, and widens the training commands with it), and with your
 own log.
 
 The paraphrase callback should preserve meaning and numbers as digits. It
-runs once per distinct base command, before generated delays are added,
+runs once per distinct complete command, including delays and durations,
 and is not used for evaluation.
 
 ## Learn from your log
@@ -264,9 +282,12 @@ automatically. Keep separate tests to check the next model.
 
 ## The demo model
 
-The package ships a model trained on the demo home (`wren/home.json`: 20
-targets, 50 examples, 18 tests). `act` runs it when you pass no `model`, and
-so does the command line:
+The package ships a model trained on an earlier demo home: 20 targets,
+50 examples and 18 tests. The current `wren/home.json` keeps those targets
+and expands the data to 56 examples, 8 calibration commands and 26 tests.
+The retrained candidate improved raw accuracy but failed the acceptance
+check, so the shipped weights retain the older data and per-call policy.
+`act` runs the shipped model when you pass no `model`, as does the command line:
 
 ```sh
 wren "turn on the kitchen light"
@@ -294,8 +315,8 @@ for measurements and observed failures.
 |---|---|
 | Importing `fit` fails | Install the `train` extra, or run `uv sync --locked` in a checkout. |
 | CLI training cannot reach Fluksio | Start `uv run fluksio serve` from the same checkout. Python `fit` runs directly without an engine. |
-| `example cannot be learnt` | Check target names, types, allowed values, ranges, state keys, word overlap and the [byte limits](reference.md#prompt-and-answer-limits). Tests use the same validation. |
-| `no threshold reaches precision` | Inspect examples and test expectations, add missing training phrasings and retrain. No new pack is written. |
+| `example cannot be learnt` | Check labels, required state, word overlap and [byte limits](reference.md#prompt-and-answer-limits). Training examples must show required targets and state; evaluation retains selection failures. |
+| `no threshold reaches precision` | Inspect examples and calibration expectations, add missing training phrasings and retrain. No new pack is written. |
 | `act` returns `[]` | The model may abstain, generate an invalid answer or exceed the answer limit. The return value does not distinguish these cases. |
 | Slow NumPy inference | Try `OPENBLAS_NUM_THREADS=1` before starting Python if your NumPy uses OpenBLAS. |
 

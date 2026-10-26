@@ -1,6 +1,6 @@
 # Reference
 
-The public package exports `Target`, `Call`, `act` and `load_pack`.
+The public package exports `Target`, `Call`, `act`, `accept` and `load_pack`.
 Inference needs only NumPy. Import training functions from `wren.train`
 after installing the `train` extra.
 
@@ -51,6 +51,12 @@ a prompt, decodes greedily and parses the answer. With no `model`, it loads
 and caches the packaged demo model. A custom model is the dictionary
 returned by `load_pack(path)`.
 
+`accept(calls, *, model=None) -> list[Call]` applies the pack's saved
+threshold and `acceptance` policy. `"answer"` accepts all calls only when
+each passes; `"call"` filters each call separately. Packs without this
+metadata field use `"call"`. Omitted `model` uses the packaged model. The
+helper cannot detect omitted calls and does not execute anything.
+
 `act` does not filter by confidence or verify that the supplied target
 definitions match the model's training metadata. `[]` can mean abstention
 or rejection of an invalid or incomplete answer.
@@ -71,8 +77,10 @@ Selection uses words from target names and descriptions, lowercased and
 split on underscores and punctuation, with common function words removed
 and a simple plural `s` removal. Targets sharing the most words with the
 command get space first; ties use input order. The selected targets appear
-in their original order. Keep commands short: an overlong prompt is
-truncated from the front by the runtime.
+in their original order. A line that is too large is skipped so later
+targets can still fit. `act` rejects a command that alone exceeds the prompt
+budget; it does not discard its beginning. The lower-level raw runtimes
+still retain the tail of overlong prompts.
 
 From `wren.targets`, `select(targets, command, budget=288)` and
 `prompt(selected_targets, command)` expose these steps. For example:
@@ -101,10 +109,10 @@ targets omitted from the prompt by selection.
 ```python
 from wren.train import fit
 
-result = fit(targets, out="home.bin", examples=[], tests=[])
+result = fit(targets, out="home.bin", examples=[], calibration=[], tests=[])
 ```
 
-`out` is required. `examples` and `tests` default to empty sequences and use
+`out` is required. `examples`, `calibration` and `tests` default to empty sequences and use
 the [installation record format](guide.md#add-examples). All options after
 `targets` are keyword-only.
 
@@ -117,9 +125,11 @@ the [installation record format](guide.md#add-examples). All options after
 | `batch_size` | `--batch-size` | `16` | 384-byte windows per update. |
 | `lr` | `--lr` | `0.003` | Initial learning rate, decaying to zero along a cosine. |
 | `n_train` | `--n-train` | `200000` | Generated training samples. |
-| `n_eval` | `--n-eval` | `1000` | Generated evaluation samples. |
-| `precision` | `--precision` | `0.99` | Requested call precision for threshold selection. |
-| `seed` | `--seed` | `0` | Model and training-corpus seed; evaluation uses `seed + 1`. |
+| `n_calibration` | `--n-calibration` | `1000` | Generated samples used to choose the threshold. |
+| `n_eval` | `--n-eval` | `1000` | Independent samples with held-out phrasing families. |
+| `precision` | `--precision` | `0.99` | Requested precision under the acceptance policy, measured on calibration. |
+| `acceptance` | `--acceptance` | `answer` | Complete-answer precision and acceptance; `call` selects the previous per-call policy. |
+| `seed` | `--seed` | `0` | Model/training seed; calibration uses `seed + 1`, evaluation `seed + 2`. |
 
 Keep counts positive and provide enough training text for a full window.
 The default installation model has about 1.12M parameters and a 535 kB pack.
@@ -130,7 +140,7 @@ Two callbacks are available through Python only:
   and a float loss.
 - `paraphrase(command) -> list[str]` supplies alternate training phrasings.
   Preserve meaning and numbers as digits. Results are cached per distinct
-  base command during corpus generation, before generated delays are added.
+  complete command during corpus generation, including delays and durations.
   Evaluation does not use the callback.
 
 ### Results
@@ -140,9 +150,19 @@ Two callbacks are available through Python only:
 | Key | Meaning |
 |---|---|
 | `exact_match` | Fraction of generated evaluation samples with exactly the expected calls before confidence filtering. |
-| `threshold` | Lowest confidence at which applied calls reach the precision on the generated evaluation calls and on the installation test calls, each on its own. |
+| `threshold` | Cutoff chosen on generated and installation calibration sets, each checked separately under the saved acceptance policy. |
 | `coverage` | Fraction of generated evaluation samples with exactly the expected calls after filtering. Includes correct abstentions. |
 | `test_exact_match`, `test_coverage` | The same sample metrics on supplied tests; absent when no tests are given. |
+| `positive_coverage` | Fraction of commands requiring calls that are handled completely and correctly after acceptance. |
+| `call_precision`, `command_precision` | Correct calls / accepted calls; complete correct answers / nonempty accepted answers. |
+| `accepted_commands`, `accepted_calls` | Counts supporting the precision estimates. |
+| `partial_commands` | Nonempty accepted answers that contain only some of the expected calls. |
+| `wrong_commands` | Accepted answers containing any unexpected call. |
+| `missed_commands` | Commands requiring calls for which none were accepted. |
+| `by_kind` | Counts and metrics for abstentions, reads, sets, multiple calls, delays and durations. |
+| `calibration`, `calibration_tests`, `tests` | Detailed metrics for each separate set; optional installation sets are absent when empty. |
+| `selection`, `test_selection` | Required-target/state recall, byte-limit failures and affected commands. |
+| `corpus` | Training generation counts: attempted, accepted, reserved-text exclusions and selection/byte-limit rejections. |
 | `final_loss` | Last training step's mean next-byte cross-entropy, in nats. |
 | `n_params` | Parameter count. |
 | `seconds` | End-to-end elapsed time, including corpus generation, evaluation and export. |
@@ -150,19 +170,16 @@ Two callbacks are available through Python only:
 Installation metrics compare target, value and delay, ignoring call order
 and confidence.
 
-A nonempty test set containing only abstention cases cannot yield a finite
-threshold at the default precision: calibration needs correctly predicted
-calls. Include positive test cases as well.
-
-Current calibration takes the higher of two independently selected
-thresholds without rechecking precision there. A higher cutoff can reduce
-precision on either set, so the saved threshold does not guarantee the
-requested precision even on calibration data. Evaluate the saved threshold
-and inspect the accepted calls for your installation.
+Rates with empty denominators are `None`. Precision is an empirical
+calibration estimate, not a guarantee on new commands. Generated calibration
+must retain at least one accepted prediction; an installation calibration
+set may retain none. Tests never influence the threshold. Include positive
+and negative tests to measure useful coverage and incorrect actions.
 
 The pack's metadata stores `targets` (without current values), `threshold`,
-`precision`, `steps`, `date` (UTC date), and `test_exact_match` when tests are
-supplied. It does not store the examples, test records, complete training
+`precision`, `acceptance`, `steps`, `date` (UTC date), evaluation metrics,
+split sizes/seed, and `test_exact_match` when tests are supplied.
+It does not store the examples, test records, complete training
 configuration or optimizer state. Keep the installation JSON and training
 settings with the pack. `fit` always starts a new model; it does not resume
 from a pack.
@@ -173,17 +190,28 @@ Use installation tests to check a saved model without retraining:
 
 ```python
 from wren.dataset import as_case
-from wren.eval import coverage
+from wren.eval import metrics, selection
 
 cases = [as_case(targets, record) for record in home["tests"]]
 predicted = [act(command, state, model=model) for command, state, _ in cases]
 expected = [calls for _, _, calls in cases]
-print(coverage(predicted, expected, model["meta"]["threshold"]))
+print(
+    metrics(
+        predicted,
+        expected,
+        model["meta"]["threshold"],
+        policy=model["meta"].get("acceptance", "call"),
+    )
+)
+print(selection(cases, required_state=[r.get("state", {}) for r in home["tests"]]))
 ```
 
 Here `home`, `targets` and `model` are loaded as in the
 [How-to](guide.md#run-a-command), and the test list must be nonempty.
 `as_case` uses listed values for state keys not specified in the test.
+It validates labels but retains commands that fail selection or byte limits.
+`corpus(..., filter_unlearnable=False, diagnostics=counts)` similarly retains
+generated failures for evaluation; training filters them by default.
 
 ## C runtime
 
