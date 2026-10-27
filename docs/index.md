@@ -24,7 +24,8 @@ wren "turn on the kitchen light"
 # >> set(kitchen_light, true)  1.00
 ```
 
-The `wren` package on PyPI is an unrelated project.
+The distribution is named `wren-lm` and imports as `wren`. The `wren`
+package on PyPI is an unrelated project.
 
 The package ships a demo model trained on a home with 20 targets
 (`wren/home.json`), which the command line uses by default. For your own
@@ -32,7 +33,7 @@ installation, follow the [How-to](guide.md) to create `home.json` with targets,
 examples and tests, then install the training extra:
 
 ```sh
-python -m pip install "wren[train] @ git+https://github.com/stroblme/wren"
+python -m pip install "wren-lm[train] @ git+https://github.com/stroblme/wren"
 ```
 
 Train and load a pack with Python, or use the

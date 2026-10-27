@@ -20,13 +20,14 @@ wren "turn on the kitchen light"
 
 On Windows, activate with `.venv\Scripts\Activate.ps1` in PowerShell instead.
 
-This installs the NumPy runtime and a demo model. The package named `wren`
-on PyPI is unrelated; use the Git URL above.
+This installs the NumPy runtime and a demo model. The distribution is named
+`wren-lm` and imports as `wren`. The package named `wren` on PyPI is
+unrelated; use the Git URL above.
 
 To train through Python, install the training extra:
 
 ```sh
-python -m pip install "wren[train] @ git+https://github.com/stroblme/wren"
+python -m pip install "wren-lm[train] @ git+https://github.com/stroblme/wren"
 ```
 
 It adds JAX, Flax and Optax. A GPU and Fluksio are not required for

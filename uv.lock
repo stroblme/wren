@@ -3656,7 +3656,7 @@ wheels = [
 ]
 
 [[package]]
-name = "wren"
+name = "wren-lm"
 version = "2.0.0"
 source = { editable = "." }
 dependencies = [
@@ -3684,7 +3684,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
-    { name = "wren", extra = ["train"] },
+    { name = "wren-lm", extra = ["train"] },
 ]
 
 [package.metadata]
@@ -3706,7 +3706,7 @@ dev = [
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.16.5" },
     { name = "ty", specifier = ">=0.0.75" },
-    { name = "wren", extras = ["train"] },
+    { name = "wren-lm", extras = ["train"] },
 ]
 
 [[package]]

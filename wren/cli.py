@@ -72,7 +72,7 @@ def add_knobs(parser: argparse.ArgumentParser) -> None:
     try:
         from wren.train import DEFAULTS
     except ImportError:
-        sys.exit("wren --train needs the train extra: pip install 'wren[train]'")
+        sys.exit("wren --train needs the train extra: pip install 'wren-lm[train]'")
     # Every value is sent, so the run records the whole configuration rather
     # than only what was said out loud.
     for name, default in DEFAULTS.items():

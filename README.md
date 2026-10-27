@@ -8,12 +8,13 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
 </p>
 
-Wren is a small attention-only model that reads bytes and turns short, frequent commands into proposed calls on a fixed set of targets.
+A small research project for me to learn and understand language models.
+
+Wren is a small attention-only model which turns short, frequent commands into proposed calls on a fixed set of targets.
 You can train your own model from self-defined targets, examples and test commands conveniently on a CPU.
-Training is carried out using JAX but inference needs only NumPy.
 Wren is intended to be part of [Fluksio](https://fluksio.com) but also works as a standalone library.
 
-The shipped demo model answers in a median **52 ms** on a CPU, packs into **535 kB** and took roughly **40–60 minutes** to train on a 20-core CPU.
+The shipped demo model answers in a median **52 ms** on a CPU and packs into **535 kB** of memory, making it ideal for local inference.
 See [Research and benchmarks](https://stroblme.github.io/wren/research-studies/) for measurement conditions, accuracy and historical comparisons.
 
 ## Setup
@@ -25,11 +26,12 @@ In an activated virtual environment:
 python -m pip install git+https://github.com/stroblme/wren
 ```
 
-Use the Git URL: the package named `wren` on PyPI is unrelated.
+The distribution is named `wren-lm` and imports as `wren`. Use the Git
+URL: the package named `wren` on PyPI is unrelated.
 To train through Python, install the training extra:
 
 ```sh
-python -m pip install "wren[train] @ git+https://github.com/stroblme/wren"
+python -m pip install "wren-lm[train] @ git+https://github.com/stroblme/wren"
 ```
 
 For CLI training and development, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and clone the repo:
@@ -41,9 +43,9 @@ uv sync --locked
 uv run fluksio serve
 ```
 
-Keep the engine running for CLI training.
+Keep the Fluksio engine running for CLI training.
 The default environment includes training and quality-check tools.
-Inference and Python `fit` can run without Fluksio.
+Inference (Numpy) and Python `fit` (JAX) can run without Fluksio.
 See [Development](https://stroblme.github.io/wren/development/) for CPU/GPU setup, tests and documentation builds.
 
 ## Usage

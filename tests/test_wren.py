@@ -98,7 +98,7 @@ def test_cli_train_without_jax_names_the_extra():
         [sys.executable, "-c", code], capture_output=True, text=True, check=False
     )
     assert result.returncode == 1
-    assert "pip install 'wren[train]'" in result.stderr
+    assert "pip install 'wren-lm[train]'" in result.stderr
 
 
 def test_generate_batch_matches_full_forward():
