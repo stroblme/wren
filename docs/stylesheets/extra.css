@@ -1,0 +1,26 @@
+/* Palette taken from docs/wren-logo.svg: taupe ring, cream ground, dark eye. */
+body[data-md-color-scheme="default"][data-md-color-primary] {
+  --md-hue: 30deg;
+  --md-primary-fg-color: #6f6255;
+  --md-primary-fg-color--light: #8a7867;
+  --md-primary-fg-color--dark: #3d352e;
+  --md-accent-fg-color: #8a7867;
+  --md-accent-fg-color--transparent: #8a78671a;
+  --md-code-bg-color: #f6f1ea;
+  --md-code-hl-color: #a89684;
+  --md-code-hl-color--light: #a8968433;
+  --md-typeset-mark-color: #efe6da;
+}
+
+body[data-md-color-scheme="slate"][data-md-color-primary] {
+  --md-hue: 30deg;
+  --md-primary-fg-color: #a89684;
+  --md-primary-fg-color--light: #efe6da;
+  --md-primary-fg-color--dark: #8a7867;
+  --md-accent-fg-color: #efe6da;
+  --md-accent-fg-color--transparent: #efe6da1a;
+  --md-typeset-a-color: #a89684;
+  --md-code-hl-color: #a89684;
+  --md-code-hl-color--light: #a8968433;
+  --md-typeset-mark-color: #a8968466;
+}
