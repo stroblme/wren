@@ -16,6 +16,7 @@ exclude_docs = """
 /ROADMAP.md
 /qfm-relation.md
 """
+extra_css = ["stylesheets/extra.css"]
 
 # Must stay above the first [project.*] table, or TOML nests it there.
 nav = [
