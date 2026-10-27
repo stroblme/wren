@@ -8,8 +8,6 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
 </p>
 
-A small research project for me to learn and understand language models.
-
 Wren is a small attention-only model which turns short, frequent commands into proposed calls on a fixed set of targets.
 You can train your own model from self-defined targets, examples and test commands conveniently on a CPU.
 Wren is intended to be part of [Fluksio](https://fluksio.com) but also works as a standalone library.
