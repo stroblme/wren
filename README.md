@@ -121,3 +121,58 @@ wren --targets home.json --model home.bin "close the awning in 10 minutes"
 
 The CLI prints all returned calls and rounded confidences, including calls below the threshold.
 The [Reference](https://stroblme.github.io/wren/reference/) lists the API, training options and C runtime usage.
+
+## FAQ
+
+### Is Wren a large language model?
+
+No. Wren is a small model trained specifically for your devices and controls, called targets.
+It learns from generated commands and your examples, and has no general knowledge.
+Your application can use it for common local commands and send unhandled requests to a larger model.
+
+### How is Wren built and trained?
+
+Wren uses a compact model that can be trained and run on a CPU.
+The demo model takes up 535 kB and took 40–60 minutes to train.
+
+Training uses commands generated from your target names and descriptions, plus your examples.
+These include switching devices on or off, reading values and scheduling changes.
+See [Research and benchmarks](https://stroblme.github.io/wren/research-studies/) for technical details and the [Reference](https://stroblme.github.io/wren/reference/) for training options.
+
+### How is the confidence threshold chosen?
+
+Wren gives each proposed action a confidence score. This is not the probability that the action is correct.
+During training, it chooses a cutoff by checking answers against a separate sample of commands and any calibration examples you supply.
+The default goal is 99% correct answers among those accepted on that data; this is not a guarantee for new requests.
+If no cutoff meets the goal, no model is saved.
+
+Use `accept` to apply the saved cutoff. `act` and the command line show proposed actions without this filtering.
+
+### How does Wren handle unfamiliar commands?
+
+Wren is trained to leave unsupported requests unhandled, but unfamiliar wording can still cause confident mistakes.
+For example, the demo proposes switching lights *on* for "kill all the lights".
+
+Targets are selected by matching words in their names and descriptions with the command.
+Add synonyms to descriptions, add examples of unfamiliar phrasing or [learn from your log](https://stroblme.github.io/wren/guide/#learn-from-your-log), then retrain.
+
+An empty result can mean either Wren declined the command or its answer was rejected as invalid.
+
+### How does Wren balance wrong actions and missed commands?
+
+Wren favors leaving a command unhandled over making a wrong change.
+Lowering `precision` during training lets it handle more commands at the risk of more mistakes.
+
+With newly trained models, `accept` keeps all proposed actions only if every action passes the cutoff; otherwise it rejects the whole answer.
+It cannot detect missing actions or confident mistakes.
+
+### How do I add my own targets and commands?
+
+List your targets in `home.json`, each with a name, value type and current value. You can also set limits on allowed values.
+Use descriptions with words people are likely to say, add example commands and tests, then train.
+
+Wren can read values and propose changes, including delayed changes. Custom function calls are not supported.
+For scenes or groups of devices, define a target such as `all_lights` and have your application carry out the actions.
+
+Retrain when target definitions or examples change. Updating current values needs no retraining.
+The [How-to](https://stroblme.github.io/wren/guide/) walks through the setup.
