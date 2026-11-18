@@ -75,12 +75,13 @@ more of the budget.
 
 Selection uses words from target names and descriptions, lowercased and
 split on underscores and punctuation, with common function words removed
-and a simple plural `s` removal. Targets sharing the most words with the
-command get space first; ties use input order. The selected targets appear
-in their original order. A line that is too large is skipped so later
-targets can still fit. `act` rejects a command that alone exceeds the prompt
-budget; it does not discard its beginning. The lower-level raw runtimes
-still retain the tail of overlong prompts.
+and a simple plural `s` removal. Only targets sharing at least one word
+with the command are candidates; a command sharing no word gets an empty
+target list. Targets sharing the most words get space first; ties use input
+order. The selected targets appear in their original order. A line that is
+too large is skipped so later targets can still fit. `act` rejects a command
+that alone exceeds the prompt budget; it does not discard its beginning. The
+lower-level raw runtimes still retain the tail of overlong prompts.
 
 From `wren.targets`, `select(targets, command, budget=288)` and
 `prompt(selected_targets, command)` expose these steps. For example:

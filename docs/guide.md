@@ -61,8 +61,10 @@ examples, calibration commands and tests:
 
 Choose unique snake_case names and descriptions that use words people will
 say. Wren uses word overlap to select targets; it does not resolve synonyms
-on its own. Give numeric targets a realistic `range` and string targets
-their allowed `values`. See the [field reference](reference.md#target).
+on its own. A target sharing no word with the command is left out of the
+prompt, so the model sees neither its name nor its value. Give numeric
+targets a realistic `range` and string targets their allowed `values`.
+See the [field reference](reference.md#target).
 
 The demo installation, a home with 20 targets, is
 [`wren/home.json`](https://github.com/stroblme/wren/blob/main/wren/home.json).
