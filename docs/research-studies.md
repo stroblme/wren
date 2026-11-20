@@ -12,7 +12,8 @@ The prompt supplies target names and current values; the model generates
 for storage; embeddings and normalization scales remain float32. NumPy and
 C runtimes load the same pack.
 
-![Wren architecture](architecture.svg)
+![Wren architecture](architecture.svg#only-light){ width="340" }
+![Wren architecture](architecture-dark.svg#only-dark){ width="340" }
 
 ## Demo installation
 

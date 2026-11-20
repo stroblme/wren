@@ -93,8 +93,8 @@ The site is configured in `zensical.toml`, built into `site/` and published
 by `.github/workflows/docs.yml`. Edit the Markdown in `docs/`; edit
 `README.md` for the repository overview. Ignored working notes are excluded
 from the site. To update the architecture drawing, edit
-`docs/architecture.d2` and render it with
-`d2 docs/architecture.d2 docs/architecture.svg`.
+`docs/architecture.d2` and re-render the light and dark SVGs with the two
+`d2` commands at the top of that file.
 
 ## Wren in Fluksio
 

@@ -1,7 +1,11 @@
 # Wren architecture — attention-only byte-level decoder
-# render: d2 docs/architecture.d2 docs/architecture.svg
+# render, from the repo root (elk with tight spacing keeps the drawing compact;
+# the site picks the light or dark file by its theme toggle, see extra.css):
+#   d2 -l elk --elk-nodeNodeBetweenLayers 24 --elk-edgeNodeBetweenLayers 12 --pad 8 docs/architecture.d2 docs/architecture.svg
+#   d2 -l elk --elk-nodeNodeBetweenLayers 24 --elk-edgeNodeBetweenLayers 12 --pad 8 -t 200 docs/architecture.d2 docs/architecture-dark.svg
 
 direction: down
+style.fill: transparent
 
 bytes: "UTF-8 bytes\n1 token = 1 byte, vocab 256"
 embed: "token embedding 256 × 256"
@@ -10,17 +14,13 @@ blocks: "attention-only block   × 4" {
   x: "x"
   norm: "RMSNorm (pre-norm)"
   qkv: "linear → Q, K, V"
-  qk: "QK-norm on Q, K\n(keeps deep stacks trainable)"
-  rope: "RoPE on Q, K\n(relative positions)"
+  qk: "QK-norm on Q"
+  rope: "RoPE on Q"
   attn: "causal softmax attention\n4 heads × 64 dims"
   wo: "output projection"
   add: "+"
   x -> norm -> qkv -> qk -> rope -> attn -> wo -> add
   x -> add: "residual" {style.stroke-dash: 3}
-  note: "no feed-forward network:\nits parameter budget is spent\non more attention layers instead" {
-    shape: text
-    style.italic: true
-  }
 }
 
 final: "RMSNorm"

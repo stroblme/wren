@@ -24,3 +24,8 @@ body[data-md-color-scheme="slate"][data-md-color-primary] {
   --md-code-hl-color--light: #a8968433;
   --md-typeset-mark-color: #a8968466;
 }
+
+/* zensical hides `#only-dark` images in light mode but not the reverse. */
+[data-md-color-scheme="slate"] img[src$="#only-light"] {
+  display: none;
+}
